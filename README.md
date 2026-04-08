@@ -2,8 +2,6 @@
 
 A floating voice-to-text pad that runs on your computer. Press a button or use a keyboard shortcut to start recording, and your speech instantly converts to text.
 
-![WhisperNote Screenshot](screenshot.png)
-
 ## What It Does
 
 - **Record voice notes** by clicking the microphone button or pressing `Ctrl+Cmd+A`
@@ -25,30 +23,23 @@ Click the green **Code** button on this page, then click **Download ZIP**.
 **Windows:**
 - Press `Win+R`, type `cmd`, press `Enter`
 
-### Step 3: Run the setup command
+### Step 3: Run one command
 
 ```bash
 # Navigate to where you extracted the zip
 cd /path/to/whisper-note
 
-# Run the automatic setup
-python setup.py
-```
-
-That's it! The setup will:
-- Check your Python version
-- Install all required dependencies
-- Create a convenient run script
-
-### Step 4: Start the app
-
-```bash
 # macOS
 ./run.sh
 
 # Windows
 run.bat
 ```
+
+That's it! On first run, it will automatically:
+1. Check for Python (prompt you to install if missing)
+2. Install all required dependencies
+3. Start the app
 
 ## First Time Setup
 
@@ -64,8 +55,8 @@ The first time you run WhisperNote, it will download the Whisper AI model (about
 
 ## Troubleshooting
 
-### "python: command not found"
-Install Python from [python.org](https://www.python.org/) (version 3.8 or newer).
+### "Python not found"
+Install Python from [python.org](https://www.python.org/) (version 3.8 or newer). Make sure to check "Add Python to PATH" on Windows.
 
 ### "No audio device found"
 Make sure your microphone is connected and enabled in your system settings.

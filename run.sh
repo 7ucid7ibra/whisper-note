@@ -1,13 +1,26 @@
-#!/usr/bin/env bash
-# Run whisper-note using the shared layer3 virtual environment.
-DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV="$DIR/../3layer-rag/.venv"
+#!/bin/bash
+# WhisperNote - One-command starter for macOS/Linux
 
-if [ ! -d "$VENV" ]; then
-  echo "venv not found at $VENV"
-  exit 1
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "WhisperNote..."
+
+# Check Python
+if ! command -v python3 &> /dev/null && ! command -v python &> /dev/null; then
+    echo "Python not found. Install from https://python.org"
+    exit 1
 fi
 
-source "$VENV/bin/activate"
-cd "$DIR"
-exec python -m src.app "$@"
+PYTHON=$(command -v python3 || command -v python)
+
+# Check if dependencies are installed
+if ! "$PYTHON" -c "import faster_whisper" 2>/dev/null; then
+    echo "Installing dependencies..."
+    "$PYTHON" -m pip install -q faster-whisper sounddevice numpy httpx pywebview
+fi
+
+# Run the app
+exec "$PYTHON" -m src.app "$@"
