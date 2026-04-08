@@ -39,6 +39,7 @@ _ENV_ALWAYS_ON_TOP = "ALWAYS_ON_TOP"
 _ENV_USE_HOSTED_WHISPER = "USE_HOSTED_WHISPER"
 _ENV_USE_LOCAL_FALLBACK = "USE_LOCAL_FALLBACK"
 _ENV_LOCAL_WHISPER_MODEL = "LOCAL_WHISPER_MODEL"
+_ENV_TRANSCRIPTION_LANGUAGE = "TRANSCRIPTION_LANGUAGE"
 # Legacy key retained for backward-compat defaults only.
 _ENV_FORCE_LOCAL   = "FORCE_LOCAL"
 
@@ -158,14 +159,16 @@ def _init_transcription_db() -> None:
 # ── Remote transcription ──────────────────────────────────────────────────────
 
 def _transcribe_remote(ip: str, port: int, wav_bytes: bytes, model_name: str = "",
-                       timeout: float = 60.0) -> str | None:
+                       language: str | None = None, timeout: float = 60.0) -> str | None:
     """POST WAV to remote ASR server, return transcribed text or None."""
     if not ip or not wav_bytes:
         return None
     try:
         import httpx
         url = f"http://{ip}:{int(port)}/asr"
-        payload = {"language": "en", "output": "json"}
+        payload = {"output": "json"}
+        if language and language != "auto":
+            payload["language"] = language
         if model_name:
             payload["model"] = model_name
         with httpx.Client(timeout=timeout) as c:
@@ -333,6 +336,7 @@ class WhisperNoteAPI:
         """Route hosted/local ASR based on settings and return (text, source)."""
         env = load_env()
         use_hosted_whisper, use_local_fallback = _derive_transcription_toggles(env)
+        transcription_lang = env.get(_ENV_TRANSCRIPTION_LANGUAGE, "auto")
 
         if use_hosted_whisper:
             for key_ip, key_port, fallback_flag in [
@@ -347,7 +351,9 @@ class WhisperNoteAPI:
                 if ip:
                     remote_model = _get_remote_whisper_model(env, fallback_flag)
                     text = _transcribe_remote(
-                        ip, port, wav_bytes, model_name=remote_model, timeout=60.0
+                        ip, port, wav_bytes, model_name=remote_model,
+                        language=transcription_lang if transcription_lang != "auto" else None,
+                        timeout=60.0
                     )
                     if text:
                         log.info("Remote ASR (%s): %s", ip, text[:100])
@@ -364,7 +370,8 @@ class WhisperNoteAPI:
         tmp = Path(tempfile.mktemp(suffix=".wav"))
         try:
             tmp.write_bytes(wav_bytes)
-            segments, _ = model.transcribe(str(tmp), language=None)
+            lang_arg = None if transcription_lang == "auto" else transcription_lang
+            segments, _ = model.transcribe(str(tmp), language=lang_arg)
             text = " ".join(seg.text for seg in segments).strip()
             log.info("Local Whisper: %s", text[:100])
             return text, f"local:{model_size}"
@@ -404,6 +411,7 @@ class WhisperNoteAPI:
             "always_on_top": env.get(_ENV_ALWAYS_ON_TOP, "true").lower() != "false",
             "use_hosted_whisper": use_hosted_whisper,
             "use_local_fallback": use_local_fallback,
+            "transcription_language": env.get(_ENV_TRANSCRIPTION_LANGUAGE, "auto"),
         }
 
     def save_settings(self, data: dict) -> None:
@@ -434,6 +442,12 @@ class WhisperNoteAPI:
             env[_ENV_USE_HOSTED_WHISPER] = "true" if data["use_hosted_whisper"] else "false"
         if "use_local_fallback" in data:
             env[_ENV_USE_LOCAL_FALLBACK] = "true" if data["use_local_fallback"] else "false"
+        if "transcription_language" in data:
+            lang = str(data["transcription_language"]).strip()
+            if lang in ("auto", "en", "de"):
+                env[_ENV_TRANSCRIPTION_LANGUAGE] = lang
+            else:
+                env[_ENV_TRANSCRIPTION_LANGUAGE] = "auto"
 
         use_hosted_whisper, use_local_fallback = _derive_transcription_toggles(env)
         if not use_hosted_whisper and not use_local_fallback:

@@ -34,6 +34,7 @@ const transcriberFallbackModelSel = document.getElementById("transcriberFallback
 const alwaysOnTopToggle          = document.getElementById("alwaysOnTopToggle");
 const useHostedWhisperToggle     = document.getElementById("useHostedWhisperToggle");
 const useLocalFallbackToggle     = document.getElementById("useLocalFallbackToggle");
+const languageSelect             = document.getElementById("languageSelect");
 
 /* ── Sounds (Web Audio API — no external files needed) ────────────────────── */
 function _beep(freq, duration, vol = 0.07, delay = 0) {
@@ -539,6 +540,7 @@ settingsBtn.addEventListener("click", (e) => {
       alwaysOnTopToggle.checked            = s.always_on_top !== false;
       useHostedWhisperToggle.checked       = s.use_hosted_whisper !== false;
       useLocalFallbackToggle.checked       = s.use_local_fallback !== false;
+      languageSelect.value                 = s.transcription_language || "auto";
     });
     settingsOverlay.style.display = "flex";
     settingsBtn.classList.add("open");
@@ -577,6 +579,7 @@ settingsSave.addEventListener("click", async () => {
     always_on_top:            alwaysOnTopToggle.checked,
     use_hosted_whisper:       useHostedWhisperToggle.checked,
     use_local_fallback:       useLocalFallbackToggle.checked,
+    transcription_language:   languageSelect.value,
     });
     settingsOverlay.style.display = "none";
     settingsBtn.classList.remove("open");
