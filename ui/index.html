@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>whisper note</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="pre-open">
+
+  <!-- Drag handle -->
+  <div class="drag-region"></div>
+
+  <!-- Ambient orbs -->
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+
+  <!-- Settings gear (top-right) -->
+  <div class="top-controls">
+    <button class="info-btn" id="infoBtn" title="How it works" aria-label="How it works">
+      i
+    </button>
+    <div class="help-card" id="helpCard" role="note" aria-label="Shortcuts and tips">
+      <p><kbd>⌃⌘A</kbd> Start/stop recording</p>
+      <p><kbd>Space</kbd> Pause/resume while recording</p>
+      <p><kbd>Enter</kbd> Stop and transcribe</p>
+      <p class="help-tip">Tip: While paused, click the center icon in the waveform to discard.</p>
+    </div>
+    <button class="settings-btn" id="settingsBtn" title="Settings">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947z"/>
+        <circle cx="10" cy="10" r="2.5"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Main glass shell -->
+  <div class="shell" id="shell">
+
+    <button class="close-btn" id="closeBtn" title="Close">×</button>
+
+    <!-- Transcript / history area -->
+    <div class="chat-wrap" id="chatWrap">
+      <div class="messages" id="messages"></div>
+
+      <!-- Mic button row -->
+      <div class="bottom-bar">
+        <div class="mic-wrap" id="micWrap">
+          <div class="mic-btn-wrap" id="micBtnWrap">
+            <button class="mic-btn" id="micBtn" title="Record  ⌃⌘A">
+              <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="2" width="6" height="11" rx="3"/>
+                <path d="M5 10a7 7 0 0 0 14 0"/>
+                <line x1="12" y1="19" x2="12" y2="22"/>
+                <line x1="8"  y1="22" x2="16" y2="22"/>
+              </svg>
+            </button>
+          </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Settings panel -->
+  <div class="settings-overlay" id="settingsOverlay" style="display:none">
+    <div class="settings-panel">
+      <div class="settings-header">
+        <span class="settings-title">Settings</span>
+        <button class="settings-close" id="settingsClose">×</button>
+      </div>
+      <div class="settings-body">
+
+        <label class="settings-label">Transcriber (primary)</label>
+        <div class="settings-endpoint-row">
+          <input
+            class="settings-input"
+            id="transcriberIpInput"
+            type="text"
+            placeholder="IP address"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <input
+            class="settings-input settings-port-input"
+            id="transcriberPortInput"
+            type="number"
+            min="1"
+            max="65535"
+            placeholder="9000"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <label class="settings-label">Primary model</label>
+        <select class="settings-select" id="transcriberModelSelect">
+          <option value="tiny">tiny</option>
+          <option value="base">base</option>
+          <option value="small">small</option>
+          <option value="medium" selected>medium</option>
+          <option value="large-v3">large-v3</option>
+        </select>
+        <p class="settings-hint">Leave empty to skip remote transcription.</p>
+
+        <label class="settings-label" style="margin-top: 14px">Transcriber (fallback)</label>
+        <div class="settings-endpoint-row">
+          <input
+            class="settings-input"
+            id="transcriberFallbackIpInput"
+            type="text"
+            placeholder="IP address"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <input
+            class="settings-input settings-port-input"
+            id="transcriberFallbackPortInput"
+            type="number"
+            min="1"
+            max="65535"
+            placeholder="9000"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <label class="settings-label">Fallback model</label>
+        <select class="settings-select" id="transcriberFallbackModelSelect">
+          <option value="tiny">tiny</option>
+          <option value="base">base</option>
+          <option value="small">small</option>
+          <option value="medium" selected>medium</option>
+          <option value="large-v3">large-v3</option>
+        </select>
+
+        <label class="settings-label settings-toggle-row" style="margin-top: 14px">
+          Always on top
+          <input type="checkbox" id="alwaysOnTopToggle" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+
+        <label class="settings-label settings-toggle-row" style="margin-top: 14px">
+          Use hosted Whisper
+          <input type="checkbox" id="useHostedWhisperToggle" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+        <p class="settings-hint">Try primary/fallback remote servers first.</p>
+
+        <label class="settings-label settings-toggle-row" style="margin-top: 10px">
+          Use local fallback
+          <input type="checkbox" id="useLocalFallbackToggle" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+        <p class="settings-hint">Use on-device Whisper if hosted is off or unreachable.</p>
+
+        <label class="settings-label" style="margin-top: 10px">Local Whisper model</label>
+        <select class="settings-select" id="localWhisperModelSelect">
+          <option value="tiny">tiny  (fastest)</option>
+          <option value="base">base</option>
+          <option value="small" selected>small  (recommended)</option>
+          <option value="medium">medium</option>
+          <option value="large-v3">large-v3  (best quality)</option>
+        </select>
+        <p class="settings-hint">Used when local fallback is active or hosted is disabled.</p>
+
+      </div>
+      <div class="settings-footer">
+        <button class="settings-save-btn" id="settingsSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
