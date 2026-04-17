@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="WhisperNote is a floating voice note app that turns speech into text quickly and keeps it out of your way." />
+  <title>WhisperNote</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  <div class="ambient ambient-c"></div>
+
+  <header class="site-nav">
+    <a class="brand" href="#top" aria-label="WhisperNote home">
+      <span class="brand-mark" aria-hidden="true">
+        <span class="brand-wave"></span>
+      </span>
+      <span class="brand-copy">
+        <strong>WhisperNote</strong>
+        <span>Floating voice notes</span>
+      </span>
+    </a>
+
+    <nav class="nav-actions" aria-label="Primary">
+      <a class="ghost-btn" href="https://github.com/7ucid7ibra/whisper-note" target="_blank" rel="noreferrer">GitHub</a>
+      <a class="primary-btn" href="https://github.com/7ucid7ibra/whisper-note/releases" target="_blank" rel="noreferrer">Download release</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero section reveal">
+      <div class="hero-copy">
+        <span class="eyebrow">Speak naturally. Keep moving.</span>
+        <h1>Turn voice into clean text without breaking your flow.</h1>
+        <p class="lead">
+          WhisperNote is a small floating app for quick voice notes. Press one hotkey,
+          speak, and get your words back as text. It stays out of the way, saves your notes,
+          and gives you control over hosted or local transcription.
+        </p>
+
+        <div class="cta-row">
+          <a class="primary-btn" href="https://github.com/7ucid7ibra/whisper-note" target="_blank" rel="noreferrer">View on GitHub</a>
+          <a class="ghost-btn" href="#how-it-works">See how it works</a>
+        </div>
+
+        <div class="stat-row" aria-label="Highlights">
+          <div class="stat-card">
+            <span class="stat-label">One hotkey</span>
+            <strong>Press, speak, done</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Local history</span>
+            <strong>Notes stay saved</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Flexible transcription</span>
+            <strong>Hosted or on-device</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-visual">
+        <div class="mock-window">
+          <div class="mock-titlebar">
+            <span class="traffic red"></span>
+            <span class="traffic yellow"></span>
+            <span class="traffic green"></span>
+            <span class="mock-title">whisper note</span>
+            <span class="mock-pill">Ctrl + Cmd + A</span>
+          </div>
+
+          <div class="mock-body">
+            <div class="mock-toprow">
+              <div class="mini-chip active">Recording</div>
+              <div class="mini-chip">Settings</div>
+              <div class="mini-chip">History</div>
+            </div>
+
+            <div class="mock-wave-shell" aria-label="Animated waveform preview">
+              <div class="waveform waveform-hero" data-wave="hero"></div>
+              <div class="wave-center">
+                <span class="wave-core"></span>
+              </div>
+            </div>
+
+            <div class="mock-transcripts">
+              <article class="mock-bubble user">
+                <span class="bubble-label">You say</span>
+                <p>Remind me to send the draft before noon.</p>
+              </article>
+              <article class="mock-bubble note">
+                <span class="bubble-label">WhisperNote</span>
+                <p>Remind me to send the draft before noon.</p>
+              </article>
+            </div>
+
+            <div class="mock-footer">
+              <span class="status-dot"></span>
+              <span>Ready for the next note</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-grid reveal" id="how-it-works">
+      <div class="section-head">
+        <span class="eyebrow">What it does</span>
+        <h2>A simple tool with a very narrow job.</h2>
+        <p>
+          WhisperNote is for moments when typing is slower than talking. It captures your speech,
+          turns it into text, and keeps that text close at hand so you can copy it, edit it, or move on.
+        </p>
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature-card">
+          <span class="feature-index">01</span>
+          <h3>Capture</h3>
+          <p>Start with a click or a hotkey. The window stays small, floating, and easy to reach.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-index">02</span>
+          <h3>Transcribe</h3>
+          <p>Your voice becomes text quickly, with the option to use hosted services or local Whisper.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-index">03</span>
+          <h3>Keep</h3>
+          <p>Every completed note is stored locally so you can revisit it later or copy it again.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section split-section reveal">
+      <div class="split-copy">
+        <span class="eyebrow">Inside the app</span>
+        <h2>Built to stay quiet until you need it.</h2>
+        <p>
+          The interface is intentionally small: a mic button, a waveform, and a few controls.
+          That keeps the focus on the note itself instead of the tool.
+        </p>
+        <ul class="check-list">
+          <li>Global hotkey for quick capture</li>
+          <li>Pause, resume, or discard while recording</li>
+          <li>Hosted or local transcription depending on your preference</li>
+          <li>Notes saved in a local database</li>
+        </ul>
+      </div>
+
+      <div class="app-mockup">
+        <div class="app-shell">
+          <div class="app-header">
+            <div class="window-dots">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="app-header-copy">
+              <strong>WhisperNote</strong>
+              <span>Now capturing</span>
+            </div>
+            <button class="mock-info" type="button">i</button>
+          </div>
+
+          <div class="app-wavebox">
+            <div class="waveform waveform-app" data-wave="app"></div>
+            <div class="wave-copy">
+              <span class="wave-badge live">Recording</span>
+              <span class="wave-badge">Space pauses</span>
+              <span class="wave-badge">Enter sends</span>
+            </div>
+          </div>
+
+          <div class="app-notes">
+            <div class="note-line">“Remember to follow up on the design review.”</div>
+            <div class="note-line muted">Copied to clipboard and saved to history.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section callout reveal">
+      <div>
+        <span class="eyebrow">For non-technical users</span>
+        <h2>No setup maze. No giant dashboard. Just a fast voice note pad.</h2>
+      </div>
+      <p>
+        WhisperNote is useful when you want to speak a thought, capture it immediately, and move on.
+        It is designed to feel like a small utility rather than another app you have to manage.
+      </p>
+    </section>
+  </main>
+
+  <footer class="footer section reveal">
+    <div>
+      <span class="eyebrow">Next step</span>
+      <h2>See the project, browse the releases, or build on top of it.</h2>
+    </div>
+    <div class="cta-row footer-cta">
+      <a class="primary-btn" href="https://github.com/7ucid7ibra/whisper-note" target="_blank" rel="noreferrer">Open GitHub</a>
+      <a class="ghost-btn" href="https://github.com/7ucid7ibra/whisper-note/releases" target="_blank" rel="noreferrer">Releases</a>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
