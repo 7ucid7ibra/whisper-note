@@ -74,6 +74,14 @@ if [[ ! -d "$APP_BUNDLE" ]]; then
   exit 1
 fi
 
+PLIST="$APP_BUNDLE/Contents/Info.plist"
+MICROPHONE_DESC="WhisperNote needs microphone access to record and transcribe voice notes."
+if /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$PLIST" >/dev/null 2>&1; then
+  /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription $MICROPHONE_DESC" "$PLIST"
+else
+  /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string $MICROPHONE_DESC" "$PLIST"
+fi
+
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR"
 cp -R "$APP_BUNDLE" "$STAGING_DIR/$APP_NAME.app"

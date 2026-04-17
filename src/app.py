@@ -107,6 +107,56 @@ def _shutdown_whisper_cache() -> None:
             _whisper_cache.clear()
 
 
+# ── Mic permission ───────────────────────────────────────────────────────────
+
+
+def _ensure_microphone_permission(prompt: bool = True) -> bool:
+    """Return True if macOS microphone permission is available."""
+    if sys.platform != "darwin":
+        return True
+
+    try:
+        from AVFoundation import (
+            AVCaptureDevice,
+            AVAuthorizationStatusAuthorized,
+            AVAuthorizationStatusDenied,
+            AVAuthorizationStatusNotDetermined,
+            AVAuthorizationStatusRestricted,
+            AVMediaTypeAudio,
+        )
+    except Exception as e:
+        log.debug("Microphone permission API unavailable: %s", e)
+        return True
+
+    try:
+        status = int(AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio))
+        if status == int(AVAuthorizationStatusAuthorized):
+            return True
+        if status in (int(AVAuthorizationStatusDenied), int(AVAuthorizationStatusRestricted)):
+            return False
+
+        if status == int(AVAuthorizationStatusNotDetermined) and prompt:
+            granted: list[bool] = []
+            done = threading.Event()
+
+            def _completion(ok):
+                granted.append(bool(ok))
+                done.set()
+
+            AVCaptureDevice.requestAccessForMediaType_completionHandler_(
+                AVMediaTypeAudio,
+                _completion,
+            )
+            done.wait(timeout=15.0)
+            if granted:
+                return granted[0]
+
+        return int(AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio)) == int(AVAuthorizationStatusAuthorized)
+    except Exception as e:
+        log.debug("Microphone permission check failed: %s", e)
+        return True
+
+
 # ── Env helpers ───────────────────────────────────────────────────────────────
 
 def load_env() -> dict:
@@ -272,10 +322,14 @@ class WhisperNoteAPI:
         import sounddevice as sd
         import numpy as np
 
-        _rec_active = True
-        _rec_paused = False
-        _rec_frames = []
+        if not _ensure_microphone_permission(prompt=True):
+            msg = "Enable Microphone access for WhisperNote in System Settings, then try again."
+            log.warning("Recording start blocked: microphone permission not granted")
+            self._emit("error", msg)
+            return
+
         api_ref = self
+        stream = None
 
         def _callback(indata, frames, time_info, status):
             if not _rec_paused:
@@ -284,14 +338,33 @@ class WhisperNoteAPI:
             level = round(min(1.0, rms / 4000.0), 3)
             api_ref._emit("audio_level", level)
 
-        _rec_stream = sd.InputStream(
-            samplerate=_SAMPLE_RATE,
-            channels=1,
-            dtype="int16",
-            blocksize=_BLOCK_SIZE,
-            callback=_callback,
-        )
-        _rec_stream.start()
+        try:
+            stream = sd.InputStream(
+                samplerate=_SAMPLE_RATE,
+                channels=1,
+                dtype="int16",
+                blocksize=_BLOCK_SIZE,
+                callback=_callback,
+            )
+            stream.start()
+        except Exception as e:
+            try:
+                if stream is not None:
+                    stream.close()
+            except Exception:
+                pass
+            _rec_active = False
+            _rec_paused = False
+            _rec_frames = []
+            _rec_stream = None
+            log.warning("Recording start failed: %s", e)
+            self._emit("error", "Unable to access the microphone. Check Microphone permission in System Settings.")
+            return
+
+        _rec_active = True
+        _rec_paused = False
+        _rec_frames = []
+        _rec_stream = stream
         self._emit("recording_started", None)
         log.info("Recording started")
 

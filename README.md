@@ -73,7 +73,7 @@ The first time you run WhisperNote, it will download the Whisper AI model (about
 Install Python from [python.org](https://www.python.org/) (version 3.8 or newer). Make sure to check "Add Python to PATH" on Windows.
 
 ### "No audio device found"
-Make sure your microphone is connected and enabled in your system settings.
+Make sure your microphone is connected and enabled in your system settings. On macOS, WhisperNote also needs Microphone permission in `System Settings > Privacy & Security > Microphone`.
 
 ### App won't start
 Try running from terminal to see error messages:

@@ -14,4 +14,5 @@ Updated WhisperNote across UI, transcription routing, persistence, startup/shutd
 - Updated `run.sh` to prefer the shared `3layer-rag` virtual environment from this workspace and print the selected Python runtime.
 - Added a macOS release build script that packages `WhisperNote.app` with the custom icon and produces `dist/WhisperNote-macOS.dmg`.
 - Added `multiprocessing.freeze_support()` so the frozen macOS bundle does not recursively spawn `resource_tracker` child processes.
+- Added explicit macOS microphone permission handling and a clearer error when recording cannot start.
 
