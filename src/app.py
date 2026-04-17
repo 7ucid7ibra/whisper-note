@@ -109,11 +109,13 @@ def _shutdown_whisper_cache() -> None:
 
 # ── Mic permission ───────────────────────────────────────────────────────────
 
+_mic_permission_request_in_flight = False
 
-def _ensure_microphone_permission(prompt: bool = True) -> bool:
-    """Return True if macOS microphone permission is available."""
+
+def _microphone_permission_status() -> str:
+    """Return granted / denied / undetermined / unknown for macOS mic access."""
     if sys.platform != "darwin":
-        return True
+        return "granted"
 
     try:
         from AVFoundation import (
@@ -126,35 +128,71 @@ def _ensure_microphone_permission(prompt: bool = True) -> bool:
         )
     except Exception as e:
         log.debug("Microphone permission API unavailable: %s", e)
-        return True
+        return "unknown"
 
     try:
         status = int(AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio))
         if status == int(AVAuthorizationStatusAuthorized):
-            return True
+            return "granted"
         if status in (int(AVAuthorizationStatusDenied), int(AVAuthorizationStatusRestricted)):
-            return False
-
-        if status == int(AVAuthorizationStatusNotDetermined) and prompt:
-            granted: list[bool] = []
-            done = threading.Event()
-
-            def _completion(ok):
-                granted.append(bool(ok))
-                done.set()
-
-            AVCaptureDevice.requestAccessForMediaType_completionHandler_(
-                AVMediaTypeAudio,
-                _completion,
-            )
-            done.wait(timeout=15.0)
-            if granted:
-                return granted[0]
-
-        return int(AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio)) == int(AVAuthorizationStatusAuthorized)
+            return "denied"
+        if status == int(AVAuthorizationStatusNotDetermined):
+            return "undetermined"
     except Exception as e:
-        log.debug("Microphone permission check failed: %s", e)
+        log.debug("Microphone permission status check failed: %s", e)
+        return "unknown"
+
+    return "unknown"
+
+
+def _request_microphone_permission_async(callback) -> bool:
+    """Request macOS mic permission without blocking the caller."""
+    if sys.platform != "darwin":
+        callback(True)
         return True
+
+    try:
+        from AVFoundation import AVAudioApplication
+    except Exception as e:
+        log.debug("Microphone request API unavailable: %s", e)
+        return False
+
+    def _completion(granted):
+        try:
+            callback(bool(granted))
+        except Exception as e:
+            log.debug("Microphone permission callback failed: %s", e)
+
+    try:
+        AVAudioApplication.requestRecordPermissionWithCompletionHandler_(_completion)
+        return True
+    except Exception as e:
+        log.debug("Microphone permission request failed: %s", e)
+        return False
+
+
+def _preflight_microphone_permission() -> None:
+    """Trigger the macOS prompt early so the app appears in Privacy settings."""
+    if sys.platform != "darwin":
+        return
+
+    global _mic_permission_request_in_flight
+    status = _microphone_permission_status()
+    if status != "undetermined":
+        log.info("Microphone permission status on launch: %s", status)
+        return
+
+    _mic_permission_request_in_flight = True
+    log.info("Requesting macOS microphone permission on launch")
+
+    def _on_result(granted: bool) -> None:
+        global _mic_permission_request_in_flight
+        _mic_permission_request_in_flight = False
+        log.info("Microphone permission %s", "granted" if granted else "denied")
+
+    if not _request_microphone_permission_async(_on_result):
+        _mic_permission_request_in_flight = False
+        log.debug("Microphone permission request could not be started")
 
 
 # ── Env helpers ───────────────────────────────────────────────────────────────
@@ -318,14 +356,40 @@ class WhisperNoteAPI:
                 self._do_stop(discard=True)
 
     def _do_start(self) -> None:
-        global _rec_active, _rec_paused, _rec_frames, _rec_stream
+        global _rec_active, _rec_paused, _rec_frames, _rec_stream, _mic_permission_request_in_flight
         import sounddevice as sd
         import numpy as np
 
-        if not _ensure_microphone_permission(prompt=True):
-            msg = "Enable Microphone access for WhisperNote in System Settings, then try again."
-            log.warning("Recording start blocked: microphone permission not granted")
-            self._emit("error", msg)
+        status = _microphone_permission_status()
+        if status != "granted":
+            if status in {"denied", "restricted"}:
+                msg = "Enable Microphone access for WhisperNote in System Settings. If WhisperNote does not appear there, reset the Microphone permission and relaunch the app."
+                log.warning("Recording start blocked: microphone permission is %s", status)
+                self._emit("error", msg)
+                return
+
+            if not _mic_permission_request_in_flight:
+                _mic_permission_request_in_flight = True
+                log.info("Requesting microphone permission before recording")
+
+                def _after_request(granted: bool) -> None:
+                    global _mic_permission_request_in_flight
+                    _mic_permission_request_in_flight = False
+                    if granted:
+                        log.info("Microphone permission granted")
+                        threading.Thread(target=self._do_start, daemon=True).start()
+                    else:
+                        log.warning("Microphone permission denied")
+                        self._emit("error", "Enable Microphone access for WhisperNote in System Settings. If WhisperNote does not appear there, reset the Microphone permission and relaunch the app.")
+
+                if _request_microphone_permission_async(_after_request):
+                    self._emit("error", "WhisperNote is waiting for Microphone permission. Approve the macOS prompt, then click record again if needed.")
+                else:
+                    _mic_permission_request_in_flight = False
+                    self._emit("error", "Unable to request Microphone permission on this macOS version.")
+                return
+
+            self._emit("error", "Microphone permission prompt is already pending.")
             return
 
         api_ref = self
@@ -794,6 +858,9 @@ def main() -> None:
         min_size=(260, 340),
     )
     api.set_window(window)
+
+    if sys.platform == "darwin":
+        threading.Thread(target=_preflight_microphone_permission, daemon=True).start()
 
     window.events.loaded += lambda: _setup_global_hotkey(window, api)
 
