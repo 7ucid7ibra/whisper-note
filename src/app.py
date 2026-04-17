@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import multiprocessing
 import io
 import json
 import logging
@@ -734,4 +735,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()
