@@ -23,7 +23,28 @@ import webview
 
 log = logging.getLogger(__name__)
 
-DATA_DIR      = Path(__file__).parent.parent / "data"
+APP_NAME = "WhisperNote"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resource_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return PROJECT_ROOT
+
+
+def _data_root() -> Path:
+    if getattr(sys, "frozen", False):
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / APP_NAME
+        if sys.platform == "win32":
+            base = Path(os.environ.get("LOCALAPPDATA", Path.home()))
+            return base / APP_NAME
+        return Path.home() / f".{APP_NAME.lower()}"
+    return PROJECT_ROOT / "data"
+
+
+DATA_DIR      = _data_root()
 ENV_PATH      = DATA_DIR / ".env"
 GEOMETRY_PATH = DATA_DIR / "window_geometry.json"
 DB_PATH       = DATA_DIR / "transcriptions.db"
@@ -139,6 +160,7 @@ def _get_remote_whisper_model(env: dict, fallback: bool) -> str:
 
 
 def _init_transcription_db() -> None:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             """
@@ -681,7 +703,7 @@ def main() -> None:
             x = None
             y = None
 
-    ui_dir = Path(__file__).parent.parent / "ui"
+    ui_dir = _resource_root() / "ui"
 
     window = webview.create_window(
         "whisper note",

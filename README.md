@@ -41,6 +41,20 @@ That's it! On first run, it will automatically:
 2. Install all required dependencies
 3. Start the app
 
+
+## macOS Release Build
+
+To build an app bundle and DMG on macOS:
+
+```bash
+./scripts/build_macos_release.sh
+```
+
+The script:
+- builds `WhisperNote.app` with the custom icon from `assets/WhisperNote.icns`
+- bundles the UI into the app so it runs from the `.app` bundle
+- creates a DMG in `dist/WhisperNote-macOS.dmg`
+
 ## First Time Setup
 
 The first time you run WhisperNote, it will download the Whisper AI model (about 150MB for the "small" model). This happens automatically - just wait a bit on the first run.

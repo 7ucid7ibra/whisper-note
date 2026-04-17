@@ -2,7 +2,7 @@
 
 ## 2026-04-17
 
-Updated WhisperNote across UI, transcription routing, persistence, and startup/shutdown behavior.
+Updated WhisperNote across UI, transcription routing, persistence, startup/shutdown behavior, and macOS release packaging.
 
 - Added an info button in the title area with a short hover help card for shortcuts and usage tips.
 - Removed the always-visible mic shortcut hint and kept the shortcut guidance in the info popup.
@@ -12,4 +12,5 @@ Updated WhisperNote across UI, transcription routing, persistence, and startup/s
 - Improved shutdown so the close animation plays cleanly and the app exits more reliably.
 - Tightened global hotkey setup so macOS listen-event permission is requested and logged explicitly.
 - Updated `run.sh` to prefer the shared `3layer-rag` virtual environment from this workspace and print the selected Python runtime.
+- Added a macOS release build script that packages `WhisperNote.app` with the custom icon and produces `dist/WhisperNote-macOS.dmg`.
 

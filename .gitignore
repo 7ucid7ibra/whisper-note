@@ -6,3 +6,7 @@ data/
 *.log
 .venv/
 venv/
+build/
+dist/
+*.spec
+*.dmg
