@@ -8,18 +8,41 @@ cd "$SCRIPT_DIR"
 
 echo "WhisperNote..."
 
-# Check Python
-if ! command -v python3 &> /dev/null && ! command -v python &> /dev/null; then
-    echo "Python not found. Install from https://python.org"
-    exit 1
+# Use existing venv if available, otherwise create local one.
+VENV_DIR="$SCRIPT_DIR/.venv"
+ALT_VENV_CANDIDATES=(
+    "/Users/tehuti/Documents/MyDocuments/Development/DevDB/AllProjects/3layer-rag/.venv"
+    "/Users/tehuti/Documents/MyDocuments/Development/Dev_Archive/Projects/3_Memory-Systems/3layer-rag/.venv"
+    "/Users/tehuti/Documents/MyDocuments/Development/DevDump/3layer-rag/.venv"
+)
+
+for ALT_VENV in "${ALT_VENV_CANDIDATES[@]}"; do
+    if [ -d "$ALT_VENV" ]; then
+        VENV_DIR="$ALT_VENV"
+        break
+    fi
+done
+
+if [ "$VENV_DIR" != "$SCRIPT_DIR/.venv" ]; then
+    echo "Using shared virtual environment: $VENV_DIR"
+elif [ ! -d "$VENV_DIR" ]; then
+    echo "Creating local virtual environment..."
+    python3 -m venv "$VENV_DIR"
 fi
 
-PYTHON=$(command -v python3 || command -v python)
+# Activate venv
+source "$VENV_DIR/bin/activate"
+
+# Get the python from venv
+PYTHON="$VENV_DIR/bin/python"
+
+echo "Python: $PYTHON"
+"$PYTHON" -V
 
 # Check if dependencies are installed
 if ! "$PYTHON" -c "import faster_whisper" 2>/dev/null; then
     echo "Installing dependencies..."
-    "$PYTHON" -m pip install -q faster-whisper sounddevice numpy httpx pywebview
+    "$PYTHON" -m pip install faster-whisper sounddevice numpy httpx pywebview
 fi
 
 # Run the app

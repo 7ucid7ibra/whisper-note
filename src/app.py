@@ -510,6 +510,32 @@ def _load_geometry() -> dict:
 # ── Global hotkey ─────────────────────────────────────────────────────────────
 # Kept at module level so GC never collects the NSEvent monitor object.
 _hotkey_monitor = None
+_hotkey_perm_warned = False
+
+
+def _ensure_global_hotkey_permission(prompt: bool = True) -> bool:
+    """Return True if macOS keyboard-listen permission is available."""
+    try:
+        from Quartz import CGPreflightListenEventAccess, CGRequestListenEventAccess
+    except Exception as e:
+        # If API is unavailable, keep legacy behavior.
+        log.debug("Hotkey permission API unavailable: %s", e)
+        return True
+
+    try:
+        if CGPreflightListenEventAccess():
+            return True
+        if prompt:
+            try:
+                granted_now = bool(CGRequestListenEventAccess())
+                if granted_now:
+                    return True
+            except Exception as e:
+                log.debug("Hotkey permission request failed: %s", e)
+        return bool(CGPreflightListenEventAccess())
+    except Exception as e:
+        log.debug("Hotkey permission preflight failed: %s", e)
+        return True
 
 
 def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
@@ -520,16 +546,23 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
     schedule it with AppHelper.callAfter.  The result is stored in
     _hotkey_monitor to prevent GC from destroying the ObjC block.
     """
-    global _hotkey_monitor
+    global _hotkey_monitor, _hotkey_perm_warned
     try:
-        from AppKit import NSEvent
+        from AppKit import (
+            NSEvent,
+            NSEventMaskKeyDown,
+            NSEventModifierFlagCommand,
+            NSEventModifierFlagControl,
+            NSEventModifierFlagOption,
+            NSEventModifierFlagShift,
+        )
         from PyObjCTools import AppHelper
 
-        _CMD  = 1 << 20   # NSEventModifierFlagCommand
-        _CTRL = 1 << 18   # NSEventModifierFlagControl
-        _OPT  = 1 << 19
-        _SHFT = 1 << 17
-        _A    = 0          # kVK_ANSI_A
+        _CMD = int(NSEventModifierFlagCommand)
+        _CTRL = int(NSEventModifierFlagControl)
+        _OPT = int(NSEventModifierFlagOption)
+        _SHFT = int(NSEventModifierFlagShift)
+        _A = 0  # kVK_ANSI_A
 
         def _on_key(event):
             try:
@@ -543,6 +576,7 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
                 ):
                     # Call Python recording directly — no JS or evaluate_js needed.
                     # Spawn a thread so we don't block the Cocoa event queue.
+                    log.debug("Global hotkey detected: ⌃⌘A")
                     threading.Thread(target=api.toggle_recording, daemon=True).start()
             except Exception:
                 pass
@@ -550,10 +584,19 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
         def _register():
             global _hotkey_monitor
             _hotkey_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-                1 << 10,  # NSEventMaskKeyDown
+                int(NSEventMaskKeyDown),
                 _on_key,
             )
             log.info("Global hotkey ready: ⌃⌘A")
+
+        permission_ok = _ensure_global_hotkey_permission(prompt=True)
+        if not permission_ok and not _hotkey_perm_warned:
+            _hotkey_perm_warned = True
+            log.warning(
+                "Global hotkey permission not granted for this runtime (%s). "
+                "Enable Input Monitoring/Accessibility for your terminal/IDE and restart.",
+                sys.executable,
+            )
 
         AppHelper.callAfter(_register)
 
