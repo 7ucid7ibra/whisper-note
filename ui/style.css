@@ -847,30 +847,5 @@ body.closing {
   transform-origin: center center;
 }
 
-/* ── Drag and drop ─────────────────────────────────────────────────────────── */
-body.drag-over .shell {
-  outline: 3px dashed var(--accent);
-  outline-offset: -3px;
-}
-
-body.drag-over::before {
-  content: "Drop audio file";
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(10, 8, 22, 0.85);
-  backdrop-filter: blur(8px);
-  font-size: 18px;
-  font-weight: 500;
-  color: var(--accent);
-  z-index: 1000;
-  pointer-events: none;
-  animation: fadeIn 150ms ease;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
+/* ── Drag and drop (disabled pending fix) ─────────────────────────────────────────────────────── */
+/* body.drag-drop-target would go here if re-enabled */
