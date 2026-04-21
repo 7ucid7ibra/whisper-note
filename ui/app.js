@@ -610,8 +610,62 @@ function _isAudioFile(file) {
 
 let _dragCounter = 0;
 
-// Drag and drop disabled pending fix for UI freeze bug
-// document.body.addEventListener("dragenter", (e) => { });
-// document.body.addEventListener("dragleave", (e) => { });
-// document.body.addEventListener("dragover", (e) => { });
-// document.body.addEventListener("drop", async (e) => { });
+/* ── Drag and drop ───────────────────────────────────────────────────────── */
+const _SUPPORTED_EXTS = [".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aiff", ".aif"];
+
+function _isAudioFile(file) {
+  const name = file.name || file;
+  const ext = name.substring(name.lastIndexOf(".")).toLowerCase();
+  return _SUPPORTED_EXTS.includes(ext);
+}
+
+let _dragCounter = 0;
+
+document.addEventListener("dragenter", (e) => {
+  if (!e.dataTransfer?.types?.includes("Files")) return;
+  e.preventDefault();
+  _dragCounter++;
+  document.body.classList.add("drag-over");
+}, { passive: false });
+
+document.addEventListener("dragleave", (e) => {
+  if (!e.dataTransfer?.types?.includes("Files")) return;
+  e.preventDefault();
+  _dragCounter--;
+  if (_dragCounter === 0) {
+    document.body.classList.remove("drag-over");
+  }
+}, { passive: false });
+
+document.addEventListener("dragover", (e) => {
+  if (!e.dataTransfer?.types?.includes("Files")) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+}, { passive: false });
+
+document.addEventListener("drop", async (e) => {
+  if (!e.dataTransfer?.types?.includes("Files")) return;
+  e.preventDefault();
+  _dragCounter = 0;
+  document.body.classList.remove("drag-over");
+
+  const files = e.dataTransfer?.files;
+  if (!files || files.length === 0) return;
+
+  const audioFile = Array.from(files).find(f => _isAudioFile(f.name));
+  if (!audioFile) {
+    showSystem("Drop an audio file: wav, mp3, m4a, flac, ogg, aiff");
+    return;
+  }
+
+  if (typeof pywebview === "undefined" || !pywebview.api) return;
+  if (isRecording) {
+    showSystem("Finish recording first");
+    return;
+  }
+
+  const ext = audioFile.name.substring(audioFile.name.lastIndexOf(".")).toLowerCase();
+  const arrayBuffer = await audioFile.arrayBuffer();
+  const bytes = Array.from(new Uint8Array(arrayBuffer));
+  pywebview.api.transcribe_file_bytes(audioFile.name, ext, bytes);
+}, { passive: false });
