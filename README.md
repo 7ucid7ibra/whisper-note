@@ -42,6 +42,23 @@ That's it! On first run, it will automatically:
 3. Start the app
 
 
+### Option B: Install from DMG (macOS only)
+
+If you downloaded `WhisperNote-macOS.dmg` from the Releases page:
+
+1. **Open the DMG** - Double-click to mount it
+2. **Drag to Applications** - Drag `WhisperNote.app` to your Applications folder
+3. **Allow the app to run** - Since this app isn't signed by Apple, run this command in Terminal:
+
+```bash
+sudo xattr -rd com.apple.quarantine "/Applications/WhisperNote.app"
+```
+
+4. **Open the app** - Go to Applications and double-click WhisperNote
+
+That's it! The app is now ready to use. No Python or terminal required after setup.
+
+
 ## macOS Release Build
 
 To build an app bundle and DMG on macOS:
@@ -73,7 +90,7 @@ The first time you run WhisperNote, it will download the Whisper AI model (about
 Install Python from [python.org](https://www.python.org/) (version 3.8 or newer). Make sure to check "Add Python to PATH" on Windows.
 
 ### "No audio device found"
-Make sure your microphone is connected and enabled in your system settings. On macOS, WhisperNote also needs Microphone permission in `System Settings > Privacy & Security > Microphone`. If the app still does not appear there, reset the Microphone permission and reopen WhisperNote.
+Make sure your microphone is connected and enabled in your system settings. On macOS, WhisperNote also needs Microphone permission in `System Settings > Privacy & Security > Microphone`. If the app still does not appear there, reset the Microphone permission and reopen WhisperNote. The release build bundles the `AVFoundation` framework required for the prompt.
 
 ### App won't start
 Try running from terminal to see error messages:
