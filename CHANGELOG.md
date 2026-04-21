@@ -1,5 +1,15 @@
 # WhisperNote Change Log
 
+## 2026-04-21
+
+Added DMG distribution, drag-and-drop file transcription, and transcription metadata tracking.
+
+- Added "Option B" DMG installation instructions for macOS - download, drag to Applications, run one allowlist command, done.
+- Fixed "damaged app" error in unsigned DMG builds by removing code signing from the build script.
+- Added drag-and-drop audio file transcription - drop wav, mp3, m4a, flac, ogg, or aiff files onto the window to transcribe.
+- Added transcription metadata to database: duration_ms (transcription time), model (Whisper model used), is_local (local vs remote).
+- Fixed GUI position shift when dragging files onto the window.
+
 ## 2026-04-17
 
 Updated WhisperNote across UI, transcription routing, persistence, startup/shutdown behavior, macOS release packaging, and frozen-app launch stability.

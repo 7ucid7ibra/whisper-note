@@ -8,6 +8,7 @@ A floating voice-to-text pad that runs on your computer. Press a button or use a
 - **Instant transcription** using local Whisper AI (works offline!)
 - **Floating window** that stays on top of other apps
 - **History** of all your transcriptions saved automatically
+- **Drop audio files** - drag wav, mp3, m4a, flac, ogg, or aiff files onto the window to transcribe
 
 ## Quick Start (2 minutes)
 
