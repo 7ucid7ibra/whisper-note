@@ -613,7 +613,7 @@ let _dragCounter = 0;
 document.body.addEventListener("dragenter", (e) => {
   e.preventDefault();
   _dragCounter++;
-  if (e.dataTransfer.types.includes("Files")) {
+  if (e.dataTransfer?.types?.includes("Files")) {
     document.body.classList.add("drag-over");
   }
 });
@@ -628,7 +628,7 @@ document.body.addEventListener("dragleave", (e) => {
 
 document.body.addEventListener("dragover", (e) => {
   e.preventDefault();
-  if (e.dataTransfer) {
+  if (e.dataTransfer?.types?.includes("Files")) {
     e.dataTransfer.dropEffect = "copy";
   }
 });

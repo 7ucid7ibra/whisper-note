@@ -848,25 +848,29 @@ body.closing {
 }
 
 /* ── Drag and drop ─────────────────────────────────────────────────────────── */
-body.drag-over {
+body.drag-over .shell {
   outline: 3px dashed var(--accent);
-  outline-offset: -6px;
-  border-radius: 22px;
+  outline-offset: -3px;
 }
 
-body.drag-over::after {
+body.drag-over::before {
   content: "Drop audio file";
-  position: absolute;
+  position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(10, 8, 22, 0.85);
   backdrop-filter: blur(8px);
-  border-radius: 22px;
   font-size: 18px;
   font-weight: 500;
   color: var(--accent);
-  z-index: 100;
+  z-index: 1000;
   pointer-events: none;
+  animation: fadeIn 150ms ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
