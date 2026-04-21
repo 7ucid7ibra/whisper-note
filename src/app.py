@@ -282,13 +282,29 @@ def _init_transcription_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TEXT NOT NULL,
                 text TEXT NOT NULL,
-                source TEXT NOT NULL
+                source TEXT NOT NULL,
+                duration_ms INTEGER,
+                model TEXT,
+                is_local INTEGER DEFAULT 0
             )
             """
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_transcriptions_created_at ON transcriptions(created_at)"
         )
+        # Migration: add new columns if they don't exist
+        try:
+            conn.execute("SELECT duration_ms FROM transcriptions LIMIT 1")
+        except sqlite3.OperationalError:
+            pass
+        else:
+            # Columns exist, check if we need to add is_local
+            try:
+                conn.execute("SELECT is_local FROM transcriptions LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute(
+                    "ALTER TABLE transcriptions ADD COLUMN is_local INTEGER DEFAULT 0"
+                )
         conn.commit()
 
 
@@ -560,15 +576,23 @@ class WhisperNoteAPI:
             self._emit("transcription_error", "audio error")
             return
 
-        text, source = self._transcribe_wav_bytes(wav_bytes)
+        text, source, duration_ms, model, is_local = self._transcribe_wav_bytes(
+            wav_bytes
+        )
         if text:
-            self._save_transcription(text, source)
+            self._save_transcription(text, source, duration_ms, model, is_local)
             self._emit("transcription_result", text)
         else:
             self._emit("transcription_error", "nothing heard")
 
-    def _transcribe_wav_bytes(self, wav_bytes: bytes) -> tuple[str, str]:
-        """Route hosted/local ASR based on settings and return (text, source)."""
+    def _transcribe_wav_bytes(
+        self, wav_bytes: bytes
+    ) -> tuple[str, str, int | None, str | None, bool]:
+        """Route hosted/local ASR based on settings and return (text, source, duration_ms, model, is_local)."""
+        import time
+
+        start_time = time.monotonic()
+
         env = load_env()
         use_hosted_whisper, use_local_fallback = _derive_transcription_toggles(env)
         transcription_lang = env.get(_ENV_TRANSCRIPTION_LANGUAGE, "auto")
@@ -596,40 +620,63 @@ class WhisperNoteAPI:
                         timeout=60.0,
                     )
                     if text:
+                        duration_ms = int((time.monotonic() - start_time) * 1000)
                         log.info("Remote ASR (%s): %s", ip, text[:100])
-                        return text, f"remote:{ip}:{port}:{remote_model}"
+                        return (
+                            text,
+                            f"remote:{ip}:{port}:{remote_model}",
+                            duration_ms,
+                            remote_model,
+                            False,
+                        )
 
         if not use_local_fallback:
-            return "", ""
+            return "", "", None, None, False
 
         # Local Whisper fallback (or primary if hosted is disabled)
         model_size = _get_local_whisper_model(env)
         model = _load_whisper(model_size)
         if model is None:
-            return "", ""
+            return "", "", None, None, False
         tmp = Path(tempfile.mktemp(suffix=".wav"))
         try:
             tmp.write_bytes(wav_bytes)
             lang_arg = None if transcription_lang == "auto" else transcription_lang
             segments, _ = model.transcribe(str(tmp), language=lang_arg)
             text = " ".join(seg.text for seg in segments).strip()
+            duration_ms = int((time.monotonic() - start_time) * 1000)
             log.info("Local Whisper: %s", text[:100])
-            return text, f"local:{model_size}"
+            return text, f"local:{model_size}", duration_ms, model_size, True
         except Exception as e:
             log.warning("Local transcribe failed: %s", e)
+            return "", "", None, None, False
             return "", ""
         finally:
             tmp.unlink(missing_ok=True)
 
-    def _save_transcription(self, text: str, source: str) -> None:
+    def _save_transcription(
+        self,
+        text: str,
+        source: str,
+        duration_ms: int | None = None,
+        model: str | None = None,
+        is_local: bool = False,
+    ) -> None:
         if not text.strip():
             return
         created_at = datetime.now(timezone.utc).isoformat()
         try:
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute(
-                    "INSERT INTO transcriptions (created_at, text, source) VALUES (?, ?, ?)",
-                    (created_at, text.strip(), source or "unknown"),
+                    "INSERT INTO transcriptions (created_at, text, source, duration_ms, model, is_local) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        created_at,
+                        text.strip(),
+                        source or "unknown",
+                        duration_ms,
+                        model,
+                        1 if is_local else 0,
+                    ),
                 )
                 conn.commit()
         except Exception as e:
@@ -686,9 +733,11 @@ class WhisperNoteAPI:
             if not wav_bytes:
                 self._emit("transcription_error", "could not process audio")
                 return
-            text, source = self._transcribe_wav_bytes(wav_bytes)
+            text, source, duration_ms, model, is_local = self._transcribe_wav_bytes(
+                wav_bytes
+            )
             if text:
-                self._save_transcription(text, source)
+                self._save_transcription(text, source, duration_ms, model, is_local)
                 self._emit("transcription_result", text)
             else:
                 self._emit("transcription_error", "no text recognized")
@@ -756,9 +805,11 @@ class WhisperNoteAPI:
             if not wav_bytes:
                 self._emit("transcription_error", "could not process audio")
                 return
-            text, source = self._transcribe_wav_bytes(wav_bytes)
+            text, source, duration_ms, model, is_local = self._transcribe_wav_bytes(
+                wav_bytes
+            )
             if text:
-                self._save_transcription(text, source)
+                self._save_transcription(text, source, duration_ms, model, is_local)
                 self._emit("transcription_result", text)
             else:
                 self._emit("transcription_error", "no text recognized")
