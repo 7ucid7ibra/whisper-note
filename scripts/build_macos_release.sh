@@ -47,6 +47,7 @@ fi
 echo "Using Python: $PYTHON"
 "$PYTHON" -m pip install --upgrade pip >/dev/null
 "$PYTHON" -m pip install --upgrade -r requirements.txt pyinstaller >/dev/null
+"$PYTHON" -m pip install --upgrade pyobjc-framework-AVFoundation >/dev/null
 
 rm -rf "$BUILD_ROOT" "$DIST_DIR"
 mkdir -p "$PYI_BUILD" "$PYI_SPEC" "$DIST_DIR" "$STAGING_DIR"
@@ -64,6 +65,9 @@ mkdir -p "$PYI_BUILD" "$PYI_SPEC" "$DIST_DIR" "$STAGING_DIR"
   --collect-all sounddevice \
   --collect-all numpy \
   --collect-all httpx \
+  --collect-all objc \
+  --collect-all AVFoundation \
+  --collect-all pyobjc_framework_AVFoundation \
   --distpath "$DIST_DIR" \
   --workpath "$PYI_BUILD" \
   --specpath "$PYI_SPEC" \
@@ -82,9 +86,14 @@ else
   /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string $MICROPHONE_DESC" "$PLIST"
 fi
 
+for f in $(find "$APP_BUNDLE" -type f); do
+  codesign --remove-signature "$f" 2>/dev/null || true
+done
+
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR"
 cp -R "$APP_BUNDLE" "$STAGING_DIR/$APP_NAME.app"
+codesign --remove-signature "$STAGING_DIR/$APP_NAME.app" 2>/dev/null || true
 ln -s /Applications "$STAGING_DIR/Applications"
 
 rm -f "$DMG_FILE"
