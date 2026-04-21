@@ -1,5 +1,8 @@
 faster-whisper
 sounddevice
+soundfile
 numpy
+scipy
 httpx
 pywebview
+pyobjc-framework-AVFoundation

@@ -39,14 +39,18 @@
         <h1>Turn voice into clean text without breaking your flow.</h1>
         <p class="lead">
           WhisperNote is a small floating app for quick voice notes. Press one hotkey,
-          speak, and get your words back as text. It stays out of the way, saves your notes,
-          and gives you control over hosted or local transcription.
+          speak, and get your words back as text. It is built around local transcription first,
+          with optional hosted transcription for heavier workloads on a different network. It stays
+          out of the way, saves your notes, and keeps the workflow fast.
         </p>
 
         <div class="cta-row">
           <a class="primary-btn" href="https://github.com/7ucid7ibra/whisper-note" target="_blank" rel="noreferrer">View on GitHub</a>
           <a class="ghost-btn" href="#how-it-works">See how it works</a>
         </div>
+
+        <p class="lead lead-secondary">Press the global hotkey, speak, press it again, wait for the confirmation sound, and paste the text directly into the app you are already using.</p>
+
 
         <div class="stat-row" aria-label="Highlights">
           <div class="stat-card">
@@ -59,7 +63,7 @@
           </div>
           <div class="stat-card">
             <span class="stat-label">Flexible transcription</span>
-            <strong>Hosted or on-device</strong>
+            <strong>Local first, hosted optional</strong>
           </div>
         </div>
       </div>
@@ -114,7 +118,7 @@
         <h2>A simple tool with a very narrow job.</h2>
         <p>
           WhisperNote is for moments when typing is slower than talking. It captures your speech,
-          turns it into text, and keeps that text close at hand so you can copy it, edit it, or move on.
+          turns it into text, copies it to your clipboard, and keeps it close at hand so you can paste it, edit it, or move on.
         </p>
       </div>
 
@@ -127,12 +131,12 @@
         <article class="feature-card">
           <span class="feature-index">02</span>
           <h3>Transcribe</h3>
-          <p>Your voice becomes text quickly, with the option to use hosted services or local Whisper.</p>
+          <p>Your voice becomes text quickly. Local Whisper is the main path, and hosted servers are available when you want to push heavier workloads elsewhere.</p>
         </article>
         <article class="feature-card">
           <span class="feature-index">03</span>
           <h3>Keep</h3>
-          <p>Every completed note is stored locally so you can revisit it later or copy it again.</p>
+          <p>Every completed note is stored locally, copied to your clipboard, and ready to paste into whatever app you are already using.</p>
         </article>
       </div>
     </section>
@@ -148,8 +152,9 @@
         <ul class="check-list">
           <li>Global hotkey for quick capture</li>
           <li>Pause, resume, or discard while recording</li>
-          <li>Hosted or local transcription depending on your preference</li>
+          <li>Local transcription first, with optional hosted transcription for heavier workloads</li>
           <li>Notes saved in a local database</li>
+          <li>Automatic clipboard copy after transcription</li>
         </ul>
       </div>
 
@@ -172,12 +177,13 @@
               <span class="wave-badge live">Recording</span>
               <span class="wave-badge">Space pauses</span>
               <span class="wave-badge">Enter sends</span>
+              <span class="wave-badge">Auto-copies</span>
             </div>
           </div>
 
           <div class="app-notes">
             <div class="note-line">“Remember to follow up on the design review.”</div>
-            <div class="note-line muted">Copied to clipboard and saved to history.</div>
+            <div class="note-line muted">Copied to clipboard, saved to history, ready to paste.</div>
           </div>
         </div>
       </div>
@@ -190,7 +196,7 @@
       </div>
       <p>
         WhisperNote is useful when you want to speak a thought, capture it immediately, and move on.
-        It is designed to feel like a small utility rather than another app you have to manage.
+        It is designed to feel like a small utility rather than another app you have to manage. The result is copied to your clipboard automatically, so you can switch back to the app you are working in and paste it without extra steps.
       </p>
     </section>
   </main>

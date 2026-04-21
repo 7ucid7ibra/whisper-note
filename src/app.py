@@ -1,4 +1,5 @@
 """WhisperNote — floating voice-to-text pad. No LLM, no memory."""
+
 from __future__ import annotations
 
 import base64
@@ -21,6 +22,8 @@ from pathlib import Path
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import webview
+
+SUPPORTED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aiff", ".aif"}
 
 log = logging.getLogger(__name__)
 
@@ -45,15 +48,15 @@ def _data_root() -> Path:
     return PROJECT_ROOT / "data"
 
 
-DATA_DIR      = _data_root()
-ENV_PATH      = DATA_DIR / ".env"
+DATA_DIR = _data_root()
+ENV_PATH = DATA_DIR / ".env"
 GEOMETRY_PATH = DATA_DIR / "window_geometry.json"
-DB_PATH       = DATA_DIR / "transcriptions.db"
+DB_PATH = DATA_DIR / "transcriptions.db"
 
-_ENV_WHISPER               = "WHISPER_MODEL"
-_ENV_TRANSCRIBER_IP        = "TRANSCRIBER_IP"
-_ENV_TRANSCRIBER_PORT      = "TRANSCRIBER_PORT"
-_ENV_TRANSCRIBER_FALLBACK_IP   = "TRANSCRIBER_FALLBACK_IP"
+_ENV_WHISPER = "WHISPER_MODEL"
+_ENV_TRANSCRIBER_IP = "TRANSCRIBER_IP"
+_ENV_TRANSCRIBER_PORT = "TRANSCRIBER_PORT"
+_ENV_TRANSCRIBER_FALLBACK_IP = "TRANSCRIBER_FALLBACK_IP"
 _ENV_TRANSCRIBER_FALLBACK_PORT = "TRANSCRIBER_FALLBACK_PORT"
 _ENV_TRANSCRIBER_MODEL = "TRANSCRIBER_MODEL"
 _ENV_TRANSCRIBER_FALLBACK_MODEL = "TRANSCRIBER_FALLBACK_MODEL"
@@ -63,17 +66,17 @@ _ENV_USE_LOCAL_FALLBACK = "USE_LOCAL_FALLBACK"
 _ENV_LOCAL_WHISPER_MODEL = "LOCAL_WHISPER_MODEL"
 _ENV_TRANSCRIPTION_LANGUAGE = "TRANSCRIPTION_LANGUAGE"
 # Legacy key retained for backward-compat defaults only.
-_ENV_FORCE_LOCAL   = "FORCE_LOCAL"
+_ENV_FORCE_LOCAL = "FORCE_LOCAL"
 
 # ── Recording state (module-level so callbacks can reach it) ──────────────────
 _SAMPLE_RATE = 16000
-_BLOCK_SIZE  = 800          # ~50 ms per callback at 16 kHz
+_BLOCK_SIZE = 800  # ~50 ms per callback at 16 kHz
 
-_rec_lock   = threading.Lock()
+_rec_lock = threading.Lock()
 _rec_active = False
 _rec_paused = False
-_rec_frames: list = []      # list of numpy int16 arrays
-_rec_stream = None          # sounddevice.InputStream
+_rec_frames: list = []  # list of numpy int16 arrays
+_rec_stream = None  # sounddevice.InputStream
 
 # ── Whisper cache ─────────────────────────────────────────────────────────────
 _whisper_cache: dict = {}
@@ -86,10 +89,12 @@ def _load_whisper(model_size: str = "small"):
             return _whisper_cache[model_size] or None
         try:
             import contextlib, warnings
+
             buf = io.StringIO()
             with contextlib.redirect_stderr(buf), warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 from faster_whisper import WhisperModel
+
                 log.info("Loading Whisper %s…", model_size)
                 model = WhisperModel(model_size, device="cpu", compute_type="int8")
             _whisper_cache[model_size] = model
@@ -134,7 +139,10 @@ def _microphone_permission_status() -> str:
         status = int(AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio))
         if status == int(AVAuthorizationStatusAuthorized):
             return "granted"
-        if status in (int(AVAuthorizationStatusDenied), int(AVAuthorizationStatusRestricted)):
+        if status in (
+            int(AVAuthorizationStatusDenied),
+            int(AVAuthorizationStatusRestricted),
+        ):
             return "denied"
         if status == int(AVAuthorizationStatusNotDetermined):
             return "undetermined"
@@ -151,29 +159,43 @@ def _request_microphone_permission_async(callback) -> bool:
         callback(True)
         return True
 
-    try:
-        from AVFoundation import AVAudioApplication
-    except Exception as e:
-        log.debug("Microphone request API unavailable: %s", e)
-        return False
-
     def _completion(granted):
         try:
             callback(bool(granted))
         except Exception as e:
             log.debug("Microphone permission callback failed: %s", e)
 
+    # Prefer the newer AVAudioApplication API, but fall back to AVCaptureDevice
+    # so older framework combinations still prompt correctly.
     try:
+        from AVFoundation import AVAudioApplication
+
         AVAudioApplication.requestRecordPermissionWithCompletionHandler_(_completion)
         return True
     except Exception as e:
-        log.debug("Microphone permission request failed: %s", e)
+        log.debug("AVAudioApplication permission request unavailable: %s", e)
+
+    try:
+        from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
+
+        AVCaptureDevice.requestAccessForMediaType_completionHandler_(
+            AVMediaTypeAudio, _completion
+        )
+        return True
+    except Exception as e:
+        log.debug("AVCaptureDevice permission request unavailable: %s", e)
         return False
 
 
 def _preflight_microphone_permission() -> None:
     """Trigger the macOS prompt early so the app appears in Privacy settings."""
     if sys.platform != "darwin":
+        return
+    # Only needed when running as a frozen app bundle. When launched from the
+    # terminal the TCC entry belongs to the terminal emulator, not the Python
+    # interpreter, so this call would query the wrong process and may wrongly
+    # show a permission prompt or block recording.
+    if not getattr(sys, "frozen", False):
         return
 
     global _mic_permission_request_in_flight
@@ -196,6 +218,7 @@ def _preflight_microphone_permission() -> None:
 
 
 # ── Env helpers ───────────────────────────────────────────────────────────────
+
 
 def load_env() -> dict:
     if not ENV_PATH.exists():
@@ -238,7 +261,9 @@ def _derive_transcription_toggles(env: dict) -> tuple[bool, bool]:
 
 
 def _get_local_whisper_model(env: dict) -> str:
-    model = str(env.get(_ENV_LOCAL_WHISPER_MODEL) or env.get(_ENV_WHISPER) or "small").strip()
+    model = str(
+        env.get(_ENV_LOCAL_WHISPER_MODEL) or env.get(_ENV_WHISPER) or "small"
+    ).strip()
     return model or "small"
 
 
@@ -269,13 +294,21 @@ def _init_transcription_db() -> None:
 
 # ── Remote transcription ──────────────────────────────────────────────────────
 
-def _transcribe_remote(ip: str, port: int, wav_bytes: bytes, model_name: str = "",
-                       language: str | None = None, timeout: float = 60.0) -> str | None:
+
+def _transcribe_remote(
+    ip: str,
+    port: int,
+    wav_bytes: bytes,
+    model_name: str = "",
+    language: str | None = None,
+    timeout: float = 60.0,
+) -> str | None:
     """POST WAV to remote ASR server, return transcribed text or None."""
     if not ip or not wav_bytes:
         return None
     try:
         import httpx
+
         url = f"http://{ip}:{int(port)}/asr"
         payload = {"output": "json"}
         if language and language != "auto":
@@ -313,6 +346,7 @@ def _transcribe_remote(ip: str, port: int, wav_bytes: bytes, model_name: str = "
 
 
 # ── Main API class ────────────────────────────────────────────────────────────
+
 
 class WhisperNoteAPI:
     """Exposed to JS via window.pywebview.api.*"""
@@ -356,41 +390,79 @@ class WhisperNoteAPI:
                 self._do_stop(discard=True)
 
     def _do_start(self) -> None:
-        global _rec_active, _rec_paused, _rec_frames, _rec_stream, _mic_permission_request_in_flight
+        global \
+            _rec_active, \
+            _rec_paused, \
+            _rec_frames, \
+            _rec_stream, \
+            _mic_permission_request_in_flight
         import sounddevice as sd
         import numpy as np
 
-        status = _microphone_permission_status()
-        if status != "granted":
+        # AVFoundation permission checks only make sense when running as a frozen
+        # app bundle. From the terminal, TCC belongs to the terminal emulator —
+        # querying it here would check the Python interpreter's permission, which
+        # is wrong and blocks recording even when the terminal has mic access.
+        if getattr(sys, "frozen", False):
+            status = _microphone_permission_status()
             if status in {"denied", "restricted"}:
-                msg = "Enable Microphone access for WhisperNote in System Settings. If WhisperNote does not appear there, reset the Microphone permission and relaunch the app."
-                log.warning("Recording start blocked: microphone permission is %s", status)
-                self._emit("error", msg)
+                # Definitive denial — open the Privacy pane directly.
+                log.warning(
+                    "Recording start blocked: microphone permission is %s", status
+                )
+                subprocess.Popen(
+                    [
+                        "open",
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+                    ]
+                )
+                self._emit(
+                    "error",
+                    "Microphone access is denied. Opening System Settings — enable WhisperNote under Microphone, then try again.",
+                )
                 return
 
-            if not _mic_permission_request_in_flight:
-                _mic_permission_request_in_flight = True
-                log.info("Requesting microphone permission before recording")
+            if status == "undetermined":
+                # macOS has not been asked yet — request via AVFoundation so
+                # the system prompt appears and the app registers in Privacy settings.
+                if not _mic_permission_request_in_flight:
+                    _mic_permission_request_in_flight = True
+                    log.info("Requesting microphone permission before recording")
 
-                def _after_request(granted: bool) -> None:
-                    global _mic_permission_request_in_flight
-                    _mic_permission_request_in_flight = False
-                    if granted:
-                        log.info("Microphone permission granted")
-                        threading.Thread(target=self._do_start, daemon=True).start()
+                    def _after_request(granted: bool) -> None:
+                        global _mic_permission_request_in_flight
+                        _mic_permission_request_in_flight = False
+                        if granted:
+                            log.info("Microphone permission granted")
+                            threading.Thread(target=self._do_start, daemon=True).start()
+                        else:
+                            log.warning("Microphone permission denied")
+                            self._emit(
+                                "error",
+                                "Enable Microphone access for WhisperNote in System Settings. If WhisperNote does not appear there, reset the Microphone permission and relaunch the app.",
+                            )
+
+                    if _request_microphone_permission_async(_after_request):
+                        self._emit(
+                            "error",
+                            "WhisperNote is waiting for Microphone permission. Approve the macOS prompt, then click record again if needed.",
+                        )
+                        return
                     else:
-                        log.warning("Microphone permission denied")
-                        self._emit("error", "Enable Microphone access for WhisperNote in System Settings. If WhisperNote does not appear there, reset the Microphone permission and relaunch the app.")
-
-                if _request_microphone_permission_async(_after_request):
-                    self._emit("error", "WhisperNote is waiting for Microphone permission. Approve the macOS prompt, then click record again if needed.")
+                        # AVFoundation unavailable — fall through to sounddevice
+                        # which will trigger the TCC prompt natively.
+                        _mic_permission_request_in_flight = False
+                        log.debug(
+                            "AVFoundation unavailable; letting sounddevice trigger TCC prompt"
+                        )
                 else:
-                    _mic_permission_request_in_flight = False
-                    self._emit("error", "Unable to request Microphone permission on this macOS version.")
-                return
+                    self._emit(
+                        "error", "Microphone permission prompt is already pending."
+                    )
+                    return
 
-            self._emit("error", "Microphone permission prompt is already pending.")
-            return
+            # "granted" or "unknown" (AVFoundation not bundled) — let sounddevice
+            # open the stream; it will surface a real error if the mic is blocked.
 
         api_ref = self
         stream = None
@@ -422,7 +494,10 @@ class WhisperNoteAPI:
             _rec_frames = []
             _rec_stream = None
             log.warning("Recording start failed: %s", e)
-            self._emit("error", "Unable to access the microphone. Check Microphone permission in System Settings.")
+            self._emit(
+                "error",
+                "Unable to access the microphone. Check Microphone permission in System Settings.",
+            )
             return
 
         _rec_active = True
@@ -476,7 +551,7 @@ class WhisperNoteAPI:
             buf = io.BytesIO()
             with wave.open(buf, "wb") as wf:
                 wf.setnchannels(1)
-                wf.setsampwidth(2)   # int16
+                wf.setsampwidth(2)  # int16
                 wf.setframerate(_SAMPLE_RATE)
                 wf.writeframes(audio_np.tobytes())
             wav_bytes = buf.getvalue()
@@ -500,8 +575,8 @@ class WhisperNoteAPI:
 
         if use_hosted_whisper:
             for key_ip, key_port, fallback_flag in [
-                (_ENV_TRANSCRIBER_IP,          _ENV_TRANSCRIBER_PORT, False),
-                (_ENV_TRANSCRIBER_FALLBACK_IP,  _ENV_TRANSCRIBER_FALLBACK_PORT, True),
+                (_ENV_TRANSCRIBER_IP, _ENV_TRANSCRIBER_PORT, False),
+                (_ENV_TRANSCRIBER_FALLBACK_IP, _ENV_TRANSCRIBER_FALLBACK_PORT, True),
             ]:
                 ip = (env.get(key_ip) or "").strip()
                 try:
@@ -511,9 +586,14 @@ class WhisperNoteAPI:
                 if ip:
                     remote_model = _get_remote_whisper_model(env, fallback_flag)
                     text = _transcribe_remote(
-                        ip, port, wav_bytes, model_name=remote_model,
-                        language=transcription_lang if transcription_lang != "auto" else None,
-                        timeout=60.0
+                        ip,
+                        port,
+                        wav_bytes,
+                        model_name=remote_model,
+                        language=transcription_lang
+                        if transcription_lang != "auto"
+                        else None,
+                        timeout=60.0,
                     )
                     if text:
                         log.info("Remote ASR (%s): %s", ip, text[:100])
@@ -555,18 +635,216 @@ class WhisperNoteAPI:
         except Exception as e:
             log.warning("Failed to save transcription: %s", e)
 
+    # ── File transcription ────────────────────────────────────────────────────────
+
+    def get_supported_formats(self) -> list[str]:
+        return list(SUPPORTED_AUDIO_EXTENSIONS)
+
+    def transcribe_file(self, file_path: str) -> None:
+        path = Path(file_path)
+        if not path.exists():
+            self._emit("transcription_error", "file not found")
+            return
+        ext = path.suffix.lower()
+        if ext not in SUPPORTED_AUDIO_EXTENSIONS:
+            self._emit("transcription_error", f"unsupported format: {ext}")
+            return
+        self._emit("transcribing_file", path.name)
+        threading.Thread(
+            target=self._do_transcribe_file,
+            args=(path,),
+            daemon=True,
+        ).start()
+
+    def transcribe_file_bytes(
+        self, file_name: str, ext: str, audio_bytes: list
+    ) -> None:
+        if ext not in SUPPORTED_AUDIO_EXTENSIONS:
+            self._emit("transcription_error", f"unsupported format: {ext}")
+            return
+        if not audio_bytes:
+            self._emit("transcription_error", "empty file")
+            return
+        self._emit("transcribing_file", file_name)
+        threading.Thread(
+            target=self._do_transcribe_file_bytes,
+            args=(file_name, ext, audio_bytes),
+            daemon=True,
+        ).start()
+
+    def _do_transcribe_file_bytes(
+        self, file_name: str, ext: str, audio_bytes: list
+    ) -> None:
+        import numpy as np
+
+        try:
+            bytes_data = bytes(audio_bytes)
+            if ext == ".wav":
+                wav_bytes = self._convert_wav_bytes_to_16khz(bytes_data)
+            else:
+                wav_bytes = self._convert_audio_bytes_to_wav(bytes_data)
+            if not wav_bytes:
+                self._emit("transcription_error", "could not process audio")
+                return
+            text, source = self._transcribe_wav_bytes(wav_bytes)
+            if text:
+                self._save_transcription(text, source)
+                self._emit("transcription_result", text)
+            else:
+                self._emit("transcription_error", "no text recognized")
+        except Exception as e:
+            log.warning("File transcription failed: %s", e)
+            self._emit("transcription_error", str(e))
+
+    def _convert_audio_bytes_to_wav(self, audio_bytes: bytes) -> bytes | None:
+        import numpy as np
+
+        try:
+            import soundfile as sf
+            import scipy.signal as signal
+        except ImportError:
+            self._emit("error", "install soundfile to process audio files")
+            return None
+        try:
+            with io.BytesIO(audio_bytes) as buf:
+                audio_data, sr = sf.read(buf, dtype="float32")
+            if audio_data.ndim > 1:
+                audio_data = audio_data.mean(axis=1)
+            target_sr = _SAMPLE_RATE
+            if sr != target_sr:
+                num_samples = int(len(audio_data) * target_sr / sr)
+                audio_data = signal.resample(audio_data, num_samples)
+            audio_int16 = (np.clip(audio_data, -1.0, 1.0) * 32767).astype(np.int16)
+            return self._encode_wav(audio_int16)
+        except Exception as e:
+            log.warning("Audio conversion failed: %s", e)
+            return None
+
+    def _convert_wav_bytes_to_16khz(self, audio_bytes: bytes) -> bytes | None:
+        import numpy as np
+
+        try:
+            import scipy.signal as signal
+        except ImportError:
+            return None
+        try:
+            with wave.open(io.BytesIO(audio_bytes), "rb") as src_wf:
+                if src_wf.getnchannels() != 1 or src_wf.getsampwidth() != 2:
+                    return None
+                src_sr = src_wf.getframerate()
+                frames = src_wf.readframes(src_wf.getnframes())
+                audio_orig = np.frombuffer(frames, dtype=np.int16)
+                if src_sr == _SAMPLE_RATE:
+                    return self._encode_wav(audio_orig)
+                num_samples = int(len(audio_orig) * _SAMPLE_RATE / src_sr)
+                audio_resampled = signal.resample(
+                    audio_orig.astype(np.float32), num_samples
+                )
+                audio_16khz = np.clip(audio_resampled, -32768, 32767).astype(np.int16)
+                return self._encode_wav(audio_16khz)
+        except Exception as e:
+            log.warning("WAV conversion failed: %s", e)
+            return None
+
+    def _do_transcribe_file(self, path: Path) -> None:
+        ext = path.suffix.lower()
+        try:
+            if ext == ".wav":
+                wav_bytes = self._convert_wav_to_16khz(path)
+            else:
+                wav_bytes = self._convert_audio_to_wav(path)
+            if not wav_bytes:
+                self._emit("transcription_error", "could not process audio")
+                return
+            text, source = self._transcribe_wav_bytes(wav_bytes)
+            if text:
+                self._save_transcription(text, source)
+                self._emit("transcription_result", text)
+            else:
+                self._emit("transcription_error", "no text recognized")
+        except Exception as e:
+            log.warning("File transcription failed: %s", e)
+            self._emit("transcription_error", str(e))
+
+    def _convert_audio_to_wav(self, path: Path) -> bytes | None:
+        import numpy as np
+
+        try:
+            import soundfile as sf
+        except ImportError:
+            self._emit("error", "install soundfile to process audio files")
+            return None
+        try:
+            audio_data, sr = sf.read(str(path), dtype="float32")
+            if audio_data.ndim > 1:
+                audio_data = audio_data.mean(axis=1)
+            target_sr = _SAMPLE_RATE
+            if sr != target_sr:
+                import scipy.signal as signal
+
+                num_samples = int(len(audio_data) * target_sr / sr)
+                audio_data = signal.resample(audio_data, num_samples)
+            audio_int16 = (np.clip(audio_data, -1.0, 1.0) * 32767).astype(np.int16)
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(target_sr)
+                wf.writeframes(audio_int16.tobytes())
+            return buf.getvalue()
+        except Exception as e:
+            log.warning("Audio conversion failed: %s", e)
+            return None
+
+    def _convert_wav_to_16khz(self, path: Path) -> bytes | None:
+        import numpy as np
+
+        try:
+            with wave.open(str(path), "rb") as src_wf:
+                if src_wf.getnchannels() != 1:
+                    return None
+                if src_wf.getsampwidth() != 2:
+                    return None
+                src_sr = src_wf.getframerate()
+                frames = src_wf.readframes(src_wf.getnframes())
+                audio_orig = np.frombuffer(frames, dtype=np.int16)
+                if src_sr == _SAMPLE_RATE:
+                    return self._encode_wav(audio_orig)
+                import scipy.signal as signal
+
+                num_samples = int(len(audio_orig) * _SAMPLE_RATE / src_sr)
+                audio_resampled = signal.resample(
+                    audio_orig.astype(np.float32), num_samples
+                )
+                audio_16khz = np.clip(audio_resampled, -32768, 32767).astype(np.int16)
+                return self._encode_wav(audio_16khz)
+        except Exception as e:
+            log.warning("WAV conversion failed: %s", e)
+            return None
+
+    def _encode_wav(self, audio_np) -> bytes:
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(_SAMPLE_RATE)
+            wf.writeframes(audio_np.tobytes())
+        return buf.getvalue()
+
     # ── Settings ──────────────────────────────────────────────────────────────
 
     def get_settings(self) -> dict:
         env = load_env()
         use_hosted_whisper, use_local_fallback = _derive_transcription_toggles(env)
         return {
-            "local_whisper_model":      _get_local_whisper_model(env),
-            "transcriber_ip":           env.get(_ENV_TRANSCRIBER_IP, ""),
-            "transcriber_port":         env.get(_ENV_TRANSCRIBER_PORT, "9000"),
-            "transcriber_model":        _get_remote_whisper_model(env, False),
-            "transcriber_fallback_ip":  env.get(_ENV_TRANSCRIBER_FALLBACK_IP, ""),
-            "transcriber_fallback_port": env.get(_ENV_TRANSCRIBER_FALLBACK_PORT, "9000"),
+            "local_whisper_model": _get_local_whisper_model(env),
+            "transcriber_ip": env.get(_ENV_TRANSCRIBER_IP, ""),
+            "transcriber_port": env.get(_ENV_TRANSCRIBER_PORT, "9000"),
+            "transcriber_model": _get_remote_whisper_model(env, False),
+            "transcriber_fallback_ip": env.get(_ENV_TRANSCRIBER_FALLBACK_IP, ""),
+            "transcriber_fallback_port": env.get(
+                _ENV_TRANSCRIBER_FALLBACK_PORT, "9000"
+            ),
             "transcriber_fallback_model": _get_remote_whisper_model(env, True),
             "always_on_top": env.get(_ENV_ALWAYS_ON_TOP, "true").lower() != "false",
             "use_hosted_whisper": use_hosted_whisper,
@@ -586,11 +864,17 @@ class WhisperNoteAPI:
         if "transcriber_port" in data:
             env[_ENV_TRANSCRIBER_PORT] = str(data["transcriber_port"]).strip() or "9000"
         if "transcriber_model" in data:
-            env[_ENV_TRANSCRIBER_MODEL] = str(data["transcriber_model"]).strip() or "medium"
+            env[_ENV_TRANSCRIBER_MODEL] = (
+                str(data["transcriber_model"]).strip() or "medium"
+            )
         if "transcriber_fallback_ip" in data:
-            env[_ENV_TRANSCRIBER_FALLBACK_IP] = str(data["transcriber_fallback_ip"]).strip() or ""
+            env[_ENV_TRANSCRIBER_FALLBACK_IP] = (
+                str(data["transcriber_fallback_ip"]).strip() or ""
+            )
         if "transcriber_fallback_port" in data:
-            env[_ENV_TRANSCRIBER_FALLBACK_PORT] = str(data["transcriber_fallback_port"]).strip() or "9000"
+            env[_ENV_TRANSCRIBER_FALLBACK_PORT] = (
+                str(data["transcriber_fallback_port"]).strip() or "9000"
+            )
         if "transcriber_fallback_model" in data:
             env[_ENV_TRANSCRIBER_FALLBACK_MODEL] = (
                 str(data["transcriber_fallback_model"]).strip() or "medium"
@@ -599,9 +883,13 @@ class WhisperNoteAPI:
             env[_ENV_ALWAYS_ON_TOP] = "true" if data["always_on_top"] else "false"
             self._apply_on_top(bool(data["always_on_top"]))
         if "use_hosted_whisper" in data:
-            env[_ENV_USE_HOSTED_WHISPER] = "true" if data["use_hosted_whisper"] else "false"
+            env[_ENV_USE_HOSTED_WHISPER] = (
+                "true" if data["use_hosted_whisper"] else "false"
+            )
         if "use_local_fallback" in data:
-            env[_ENV_USE_LOCAL_FALLBACK] = "true" if data["use_local_fallback"] else "false"
+            env[_ENV_USE_LOCAL_FALLBACK] = (
+                "true" if data["use_local_fallback"] else "false"
+            )
         if "transcription_language" in data:
             lang = str(data["transcription_language"]).strip()
             if lang in ("auto", "en", "de"):
@@ -617,6 +905,7 @@ class WhisperNoteAPI:
     def _apply_on_top(self, enabled: bool) -> None:
         try:
             from webview.platforms import cocoa
+
             if self._window:
                 cocoa.set_on_top(self._window.uid, enabled)
         except Exception as e:
@@ -649,6 +938,7 @@ class WhisperNoteAPI:
             if self._window:
                 # Ensure window teardown runs on Cocoa main thread.
                 from PyObjCTools import AppHelper
+
                 AppHelper.callAfter(self._window.destroy)
         except Exception:
             try:
@@ -659,6 +949,7 @@ class WhisperNoteAPI:
 
 
 # ── Geometry helpers ──────────────────────────────────────────────────────────
+
 
 def _load_geometry() -> dict:
     try:
@@ -761,7 +1052,9 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
         AppHelper.callAfter(_register)
 
     except Exception as e:
-        log.warning("Global hotkey setup failed (window-focus shortcut still works): %s", e)
+        log.warning(
+            "Global hotkey setup failed (window-focus shortcut still works): %s", e
+        )
 
 
 def _teardown_global_hotkey() -> None:
@@ -770,6 +1063,7 @@ def _teardown_global_hotkey() -> None:
         return
     try:
         from AppKit import NSEvent
+
         NSEvent.removeMonitor_(_hotkey_monitor)
     except Exception as e:
         log.debug("Global hotkey teardown failed: %s", e)
@@ -785,7 +1079,8 @@ def _graceful_shutdown_or_force_exit(timeout_s: float = 1.5) -> None:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         alive = [
-            t for t in threading.enumerate()
+            t
+            for t in threading.enumerate()
             if t is not threading.main_thread() and t.is_alive() and not t.daemon
         ]
         if not alive:
@@ -793,16 +1088,20 @@ def _graceful_shutdown_or_force_exit(timeout_s: float = 1.5) -> None:
         time.sleep(0.05)
 
     lingering = [
-        t.name for t in threading.enumerate()
+        t.name
+        for t in threading.enumerate()
         if t is not threading.main_thread() and t.is_alive() and not t.daemon
     ]
     if lingering:
-        log.warning("Forcing exit; lingering non-daemon threads: %s", ", ".join(lingering))
+        log.warning(
+            "Forcing exit; lingering non-daemon threads: %s", ", ".join(lingering)
+        )
         logging.shutdown()
         os._exit(0)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -831,7 +1130,7 @@ def main() -> None:
     on_top = env.get(_ENV_ALWAYS_ON_TOP, "true").lower() != "false"
 
     geom = _load_geometry()
-    w = geom.get("width",  340)
+    w = geom.get("width", 340)
     h = geom.get("height", 560)
     x = geom.get("x")
     y = geom.get("y")
