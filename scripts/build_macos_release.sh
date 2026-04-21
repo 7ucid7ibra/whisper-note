@@ -93,7 +93,13 @@ done
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR"
 cp -R "$APP_BUNDLE" "$STAGING_DIR/$APP_NAME.app"
-codesign --remove-signature "$STAGING_DIR/$APP_NAME.app" 2>/dev/null || true
+
+# Strip ALL signatures BEFORE creating DMG to prevent "damaged app" error
+echo "Removing signatures..."
+for f in $(find "$STAGING_DIR" -type f); do
+  codesign --remove-signature "$f" 2>/dev/null || true
+done
+
 ln -s /Applications "$STAGING_DIR/Applications"
 
 rm -f "$DMG_FILE"
@@ -103,6 +109,9 @@ hdiutil create \
   -ov \
   -format UDZO \
   "$DMG_FILE"
+
+echo "Built app bundle: $APP_BUNDLE"
+echo "Built DMG: $DMG_FILE"
 
 echo "Built app bundle: $APP_BUNDLE"
 echo "Built DMG: $DMG_FILE"
