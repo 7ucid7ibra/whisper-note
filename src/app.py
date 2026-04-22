@@ -405,80 +405,10 @@ class WhisperNoteAPI:
             if _rec_active:
                 self._do_stop(discard=True)
 
-    def _do_start(self) -> None:
-        global \
-            _rec_active, \
-            _rec_paused, \
-            _rec_frames, \
-            _rec_stream, \
-            _mic_permission_request_in_flight
+    def _start_recording_stream(self) -> None:
+        global _rec_active, _rec_paused, _rec_frames, _rec_stream
         import sounddevice as sd
         import numpy as np
-
-        # AVFoundation permission checks only make sense when running as a frozen
-        # app bundle. From the terminal, TCC belongs to the terminal emulator —
-        # querying it here would check the Python interpreter's permission, which
-        # is wrong and blocks recording even when the terminal has mic access.
-        if getattr(sys, "frozen", False):
-            status = _microphone_permission_status()
-            if status in {"denied", "restricted"}:
-                # Definitive denial — open the Privacy pane directly.
-                log.warning(
-                    "Recording start blocked: microphone permission is %s", status
-                )
-                subprocess.Popen(
-                    [
-                        "open",
-                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-                    ]
-                )
-                self._emit(
-                    "error",
-                    "Microphone access is denied. Opening System Settings — enable WhisperNote under Microphone, then try again.",
-                )
-                return
-
-            if status == "undetermined":
-                # macOS has not been asked yet — request via AVFoundation so
-                # the system prompt appears and the app registers in Privacy settings.
-                if not _mic_permission_request_in_flight:
-                    _mic_permission_request_in_flight = True
-                    log.info("Requesting microphone permission before recording")
-
-                    def _after_request(granted: bool) -> None:
-                        global _mic_permission_request_in_flight
-                        _mic_permission_request_in_flight = False
-                        if granted:
-                            log.info("Microphone permission granted")
-                            threading.Thread(target=self._do_start, daemon=True).start()
-                        else:
-                            log.warning("Microphone permission denied")
-                            self._emit(
-                                "error",
-                                "Enable Microphone access for WhisperNote in System Settings. If WhisperNote does not appear there, reset the Microphone permission and relaunch the app.",
-                            )
-
-                    if _request_microphone_permission_async(_after_request):
-                        self._emit(
-                            "error",
-                            "WhisperNote is waiting for Microphone permission. Approve the macOS prompt, then click record again if needed.",
-                        )
-                        return
-                    else:
-                        # AVFoundation unavailable — fall through to sounddevice
-                        # which will trigger the TCC prompt natively.
-                        _mic_permission_request_in_flight = False
-                        log.debug(
-                            "AVFoundation unavailable; letting sounddevice trigger TCC prompt"
-                        )
-                else:
-                    self._emit(
-                        "error", "Microphone permission prompt is already pending."
-                    )
-                    return
-
-            # "granted" or "unknown" (AVFoundation not bundled) — let sounddevice
-            # open the stream; it will surface a real error if the mic is blocked.
 
         api_ref = self
         stream = None
@@ -522,6 +452,79 @@ class WhisperNoteAPI:
         _rec_stream = stream
         self._emit("recording_started", None)
         log.info("Recording started")
+
+    def _do_start(self) -> None:
+        global _mic_permission_request_in_flight
+
+        # AVFoundation permission checks only make sense when running as a frozen
+        # app bundle. From the terminal, TCC belongs to the terminal emulator —
+        # querying it here would check the Python interpreter's permission, which
+        # is wrong and blocks recording even when the terminal has mic access.
+        if getattr(sys, "frozen", False):
+            status = _microphone_permission_status()
+            if status in {"denied", "restricted"}:
+                # Definitive denial — open the Privacy pane directly.
+                log.warning(
+                    "Recording start blocked: microphone permission is %s", status
+                )
+                subprocess.Popen(
+                    [
+                        "open",
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+                    ]
+                )
+                self._emit(
+                    "error",
+                    "Microphone access is denied. Opening System Settings — enable WhisperNote under Microphone, then try again.",
+                )
+                return
+
+            if status == "undetermined":
+                # macOS has not been asked yet — request via AVFoundation so
+                # the system prompt appears and the app registers in Privacy settings.
+                if not _mic_permission_request_in_flight:
+                    _mic_permission_request_in_flight = True
+                    log.info("Requesting microphone permission before recording")
+
+                    def _after_request(granted: bool) -> None:
+                        global _mic_permission_request_in_flight
+                        _mic_permission_request_in_flight = False
+                        if granted:
+                            log.info("Microphone permission granted")
+                            threading.Thread(
+                                target=self._start_recording_stream,
+                                daemon=True,
+                            ).start()
+                        else:
+                            log.warning("Microphone permission denied")
+                            self._emit(
+                                "error",
+                                "Enable Microphone access for WhisperNote in System Settings. If WhisperNote does not appear there, reset the Microphone permission and relaunch the app.",
+                            )
+
+                    if _request_microphone_permission_async(_after_request):
+                        self._emit(
+                            "error",
+                            "WhisperNote is waiting for Microphone permission. Approve the macOS prompt, then click record again if needed.",
+                        )
+                        return
+                    else:
+                        # AVFoundation unavailable — fall through to sounddevice
+                        # which will trigger the TCC prompt natively.
+                        _mic_permission_request_in_flight = False
+                        log.debug(
+                            "AVFoundation unavailable; letting sounddevice trigger TCC prompt"
+                        )
+                else:
+                    self._emit(
+                        "error", "Microphone permission prompt is already pending."
+                    )
+                    return
+
+            # "granted" or "unknown" (AVFoundation not bundled) — let sounddevice
+            # open the stream; it will surface a real error if the mic is blocked.
+
+        self._start_recording_stream()
 
     def _do_stop(self, discard: bool = False) -> None:
         global _rec_active, _rec_paused, _rec_stream, _rec_frames
@@ -1185,11 +1188,13 @@ def main() -> None:
     h = geom.get("height", 560)
     x = geom.get("x")
     y = geom.get("y")
-    # Discard positions from disconnected monitors (pywebview crashes on None screen)
     if x is not None and y is not None:
         if x < -100 or y < -100 or x > 16000 or y > 16000:
             x = None
             y = None
+    else:
+        x = None
+        y = None
 
     ui_dir = _resource_root() / "ui"
 

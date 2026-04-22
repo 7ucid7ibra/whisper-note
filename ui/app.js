@@ -610,17 +610,6 @@ function _isAudioFile(file) {
 
 let _dragCounter = 0;
 
-/* ── Drag and drop ───────────────────────────────────────────────────────── */
-const _SUPPORTED_EXTS = [".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aiff", ".aif"];
-
-function _isAudioFile(file) {
-  const name = file.name || file;
-  const ext = name.substring(name.lastIndexOf(".")).toLowerCase();
-  return _SUPPORTED_EXTS.includes(ext);
-}
-
-let _dragCounter = 0;
-
 document.addEventListener("dragenter", (e) => {
   if (!e.dataTransfer?.types?.includes("Files")) return;
   e.preventDefault();
