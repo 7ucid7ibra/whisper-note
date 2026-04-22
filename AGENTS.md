@@ -163,3 +163,27 @@ sqlite3 ~/Library/Application\ Support/WhisperNote/transcriptions.db "SELECT cre
 - `ui/app.js:350-400` - Mic button and keyboard shortcuts
 - `ui/app.js:600-650` - Drag-and-drop handlers
 - `scripts/build_macos_release.sh:80-100` - Signature removal
+
+---
+
+## Session Endpoints
+
+### 2026-04-21 - Session 1 (Complete)
+
+This session ended at a clean, stable point with:
+
+1. **Working app** - DMG builds and runs without "damaged app" error
+2. **All features working** - Recording, transcription, settings, drag-and-drop
+3. **Properly documented** - AGENTS.md created for future agents
+4. **Released** - v1.0.0 published on GitHub with unsigned DMG
+
+### Starting a New Session
+
+To pick up where we left off:
+1. Pull latest: `git pull`
+2. Test locally: `python -m src.app` or `./run.sh`
+3. Make changes
+4. Build DMG: `./scripts/build_macos_release.sh`
+5. Test the .app bundle works
+6. Commit and push
+7. Upload to release: `gh release upload v1.0.0 dist/WhisperNote-macOS.dmg --clobber`
