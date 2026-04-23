@@ -13,6 +13,13 @@ let   _levelHead = 0;
 let _transcribingEl    = null;
 let _transcribingCount = 0;
 
+let _favoritesOverlayOpen = false;
+let _favoritesOverlayFocusedWrap = null;
+let _favoritesOverlayFocusedId = null;
+let _favoritesOverlayItemsById = new Map();
+let _favoritesOverlayLoadToken = 0;
+let _favoritesOverlayCloseTimer = null;
+
 /* ── DOM refs ─────────────────────────────────────────────────────────────── */
 const messages                   = document.getElementById("messages");
 const micBtn                     = document.getElementById("micBtn");
@@ -21,6 +28,7 @@ const closeBtn                   = document.getElementById("closeBtn");
 const infoBtn                    = document.getElementById("infoBtn");
 const helpCard                   = document.getElementById("helpCard");
 const settingsBtn                = document.getElementById("settingsBtn");
+const nodesBtn                   = document.getElementById("nodesBtn");
 const settingsOverlay            = document.getElementById("settingsOverlay");
 const settingsClose              = document.getElementById("settingsClose");
 const settingsSave               = document.getElementById("settingsSave");
@@ -35,6 +43,13 @@ const alwaysOnTopToggle          = document.getElementById("alwaysOnTopToggle");
 const useHostedWhisperToggle     = document.getElementById("useHostedWhisperToggle");
 const useLocalFallbackToggle     = document.getElementById("useLocalFallbackToggle");
 const languageSelect             = document.getElementById("languageSelect");
+const nodesOverlay               = document.getElementById("nodesOverlay");
+const nodesBackdrop              = document.getElementById("nodesBackdrop");
+const nodesModal                 = document.getElementById("nodesModal");
+const nodesClose                 = document.getElementById("nodesClose");
+const nodesGrid                  = document.getElementById("nodesGrid");
+const nodesFocusStage            = document.getElementById("nodesFocusStage");
+const nodesCount                 = document.getElementById("nodesCount");
 
 /* ── Sounds (Web Audio API — no external files needed) ────────────────────── */
 function _beep(freq, duration, vol = 0.07, delay = 0) {
@@ -121,9 +136,10 @@ window.__onPythonEvent = (raw) => {
     case "transcription_result":
       _removeTranscribingIndicator();
       playDoneSound();
-      if (data && data.trim()) {
-        navigator.clipboard.writeText(data.trim()).catch(() => {});
-        appendVoiceBubble(data.trim());
+      const transcription = typeof data === "string" ? { text: data } : (data || {});
+      if (transcription.text && transcription.text.trim()) {
+        navigator.clipboard.writeText(transcription.text.trim()).catch(() => {});
+        appendVoiceBubble(transcription);
       }
       break;
 
@@ -365,6 +381,14 @@ micBtn.addEventListener("click", () => {
 document.addEventListener("keydown", (e) => {
   const inInput = ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName);
 
+  if (_favoritesOverlayOpen) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      _closeFavoritesOverlay();
+    }
+    return;
+  }
+
   // ⌃⌘A — toggle recording (when window is focused)
   if (e.metaKey && e.ctrlKey && e.key === "a" && !e.altKey && !e.shiftKey) {
     if (inInput) return;
@@ -390,68 +414,233 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+nodesBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (_favoritesOverlayOpen) {
+    _closeFavoritesOverlay();
+  } else {
+    _openFavoritesOverlay();
+  }
+});
+
 /* ── Voice bubble ─────────────────────────────────────────────────────────── */
 const _ICON_EDIT = `<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
   <path d="M8.5 1.5 10.5 3.5 4 10 1.5 10.5 2 8 8.5 1.5Z"/>
 </svg>`;
 
-function appendVoiceBubble(text) {
-  const wrap = document.createElement("div");
-  wrap.className = "msg-wrap voice-wrap";
-
-  const div = document.createElement("div");
-  div.className       = "msg voice";
-  div.innerHTML       = escapeHtml(text).replace(/\n/g, "<br>");
-  div.dataset.rawText = text;
-  div.title           = "Click to copy";
-
-  div.addEventListener("click", () => {
-    navigator.clipboard.writeText(div.dataset.rawText || div.textContent.trim())
-      .catch(() => {});
-    div.classList.add("bubble-copied");
-    setTimeout(() => div.classList.remove("bubble-copied"), 700);
-  });
-
-  const acts    = document.createElement("div");
-  acts.className = "msg-actions";
-
-  const editBtn = document.createElement("button");
-  editBtn.className = "action-btn";
-  editBtn.title     = "Edit";
-  editBtn.innerHTML = _ICON_EDIT;
-  editBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    startEditBubble(div, wrap);
-  });
-  acts.appendChild(editBtn);
-
-  wrap.appendChild(acts);
-  wrap.appendChild(div);
-  messages.appendChild(wrap);
-  scrollBottom();
-  return div;
+function _normalizeTranscriptionRecord(record) {
+  if (record == null) return null;
+  if (typeof record === "string") {
+    const text = record.trim();
+    return text ? { text, favorite: false, id: null } : null;
+  }
+  const text = String(record.text ?? "").trim();
+  if (!text) return null;
+  return {
+    id: record.id ?? null,
+    text,
+    source: record.source || "unknown",
+    duration_ms: record.duration_ms ?? null,
+    model: record.model ?? null,
+    is_local: !!record.is_local,
+    favorite: !!record.favorite,
+    created_at: record.created_at || null,
+  };
 }
 
-function startEditBubble(bubble, wrap) {  // eslint-disable-line no-unused-vars
+function _syncFavoriteButton(button, favorite) {
+  if (!button) return;
+  button.classList.toggle("active", !!favorite);
+  button.setAttribute("aria-pressed", favorite ? "true" : "false");
+  button.setAttribute("aria-label", favorite ? "Remove favorite" : "Favorite note");
+  button.title = favorite ? "Remove favorite" : "Favorite note";
+}
+
+function _makeFavoriteButton(favorite = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "favorite-btn";
+  _syncFavoriteButton(button, favorite);
+  return button;
+}
+
+function _renderVoiceBubbleBody(bubble, text, favoriteBtn = null, favorite = false, transcriptionId = null) {
+  bubble.dataset.rawText = text;
+  bubble.dataset.favorite = favorite ? "1" : "0";
+  if (transcriptionId != null) {
+    bubble.dataset.transcriptionId = String(transcriptionId);
+  }
+  bubble.classList.toggle("favorited", !!favorite);
+
+  bubble.innerHTML = "";
+  const textEl = document.createElement("span");
+  textEl.className = "voice-text";
+  textEl.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
+  bubble.appendChild(textEl);
+
+  if (favoriteBtn) {
+    bubble.appendChild(favoriteBtn);
+    _syncFavoriteButton(favoriteBtn, favorite);
+  }
+}
+
+function _createVoiceBubble(record, options = {}) {
+  const {
+    mode = "main",
+    onFocus = null,
+    onFavoriteChanged = null,
+  } = options || {};
+  const normalized = _normalizeTranscriptionRecord(record);
+  if (!normalized) return null;
+
+  const wrap = document.createElement("div");
+  wrap.className = "msg-wrap voice-wrap";
+  if (mode !== "main") {
+    wrap.classList.add("nodes-note-wrap");
+  }
+
+  const bubble = document.createElement("div");
+  bubble.className = "msg voice";
+  bubble.dataset.mode = mode;
+  bubble.title = mode === "main" ? "Click to copy" : "Click to edit";
+  if (mode !== "main") {
+    bubble.classList.add("nodes-note");
+  }
+
+  const favoriteBtn = _makeFavoriteButton(normalized.favorite);
+  if (normalized.id == null) {
+    favoriteBtn.disabled = true;
+    favoriteBtn.title = "Saved notes only";
+  }
+  favoriteBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (favoriteBtn.disabled) return;
+    await _toggleFavoriteBubble(bubble, favoriteBtn, {
+      onChanged: (favorite, updated) => {
+        if (typeof onFavoriteChanged === "function") {
+          onFavoriteChanged({
+            favorite,
+            updated,
+            record: _normalizeTranscriptionRecord(updated || record) || normalized,
+          });
+        }
+      },
+    });
+  });
+
+  if (mode === "main") {
+    bubble.addEventListener("click", () => {
+      navigator.clipboard.writeText(bubble.dataset.rawText || bubble.textContent.trim())
+        .catch(() => {});
+      bubble.classList.add("bubble-copied");
+      setTimeout(() => bubble.classList.remove("bubble-copied"), 700);
+    });
+  } else if (typeof onFocus === "function") {
+    bubble.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onFocus({
+        record: normalized,
+        wrap,
+        bubble,
+        favoriteBtn,
+      });
+    });
+  }
+
+  _renderVoiceBubbleBody(bubble, normalized.text, favoriteBtn, normalized.favorite, normalized.id);
+  if (normalized.favorite) {
+    bubble.classList.add("favorited");
+  }
+
+  if (mode === "main") {
+    const acts = document.createElement("div");
+    acts.className = "msg-actions";
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "action-btn";
+    editBtn.title = "Edit";
+    editBtn.innerHTML = _ICON_EDIT;
+    editBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      startEditBubble(bubble, wrap);
+    });
+    acts.appendChild(editBtn);
+
+    wrap.appendChild(acts);
+  }
+  wrap.appendChild(bubble);
+  wrap.dataset.transcriptionId = normalized.id != null ? String(normalized.id) : "";
+  bubble.dataset.transcriptionId = normalized.id != null ? String(normalized.id) : "";
+  return { wrap, bubble, favoriteBtn, record: normalized };
+}
+
+async function _toggleFavoriteBubble(bubble, favoriteBtn, options = {}) {
+  const { onChanged = null } = options || {};
+  if (typeof pywebview === "undefined" || !pywebview.api || !bubble.dataset.transcriptionId) {
+    showSystem("This note has not been saved yet.");
+    return;
+  }
+
+  const transcriptionId = Number(bubble.dataset.transcriptionId);
+  const nextFavorite = !bubble.classList.contains("favorited");
+  bubble.classList.toggle("favorited", nextFavorite);
+  bubble.dataset.favorite = nextFavorite ? "1" : "0";
+  _syncFavoriteButton(favoriteBtn, nextFavorite);
+
+  try {
+    const updated = await pywebview.api.toggle_transcription_favorite(transcriptionId, nextFavorite);
+    const confirmed = !!(updated && updated.favorite);
+    bubble.classList.toggle("favorited", confirmed);
+    bubble.dataset.favorite = confirmed ? "1" : "0";
+    _syncFavoriteButton(favoriteBtn, confirmed);
+    if (typeof onChanged === "function") {
+      onChanged(confirmed, updated || null);
+    }
+  } catch (e) {
+    const reverted = !nextFavorite;
+    bubble.classList.toggle("favorited", reverted);
+    bubble.dataset.favorite = reverted ? "1" : "0";
+    _syncFavoriteButton(favoriteBtn, reverted);
+    showSystem((e && e.message) || "Could not update favorite.");
+  }
+}
+
+function appendVoiceBubble(record, { scroll = true } = {}) {
+  const item = _createVoiceBubble(record);
+  if (!item) return null;
+  messages.appendChild(item.wrap);
+  if (scroll) scrollBottom();
+  return item.bubble;
+}
+
+function startEditBubble(bubble, wrap, options = {}) {  // eslint-disable-line no-unused-vars
+  const {
+    onSave = null,
+    onCancel = null,
+    onEscape = null,
+  } = options || {};
   if (bubble.classList.contains("editing")) return;
   bubble.classList.add("editing");
 
   const originalText = bubble.dataset.rawText || bubble.textContent.trim();
+  const transcriptionId = bubble.dataset.transcriptionId;
+  const favoriteBtn = bubble.querySelector(".favorite-btn");
+  const currentFavorite = bubble.classList.contains("favorited");
 
   const ta = document.createElement("textarea");
   ta.className = "msg-edit-textarea";
-  ta.value     = originalText;
-  ta.rows      = 1;
+  ta.value = originalText;
+  ta.rows = 1;
 
-  const btnRow    = document.createElement("div");
+  const btnRow = document.createElement("div");
   btnRow.className = "msg-edit-btns";
 
-  const saveBtn        = document.createElement("button");
-  saveBtn.className    = "msg-edit-save";
-  saveBtn.textContent  = "Save";
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "msg-edit-save";
+  saveBtn.textContent = "Save";
 
-  const cancelBtn       = document.createElement("button");
-  cancelBtn.className   = "msg-edit-cancel";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "msg-edit-cancel";
   cancelBtn.textContent = "Cancel";
 
   btnRow.appendChild(cancelBtn);
@@ -469,22 +658,367 @@ function startEditBubble(bubble, wrap) {  // eslint-disable-line no-unused-vars
 
   ta.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveBtn.click(); }
-    if (e.key === "Escape") cancelBtn.click();
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (typeof onEscape === "function") {
+        onEscape({
+          bubble,
+          wrap,
+          transcriptionId: transcriptionId ? Number(transcriptionId) : null,
+          text: ta.value.trim(),
+          favorite: currentFavorite,
+        });
+      } else {
+        cancelBtn.click();
+      }
+    }
   });
 
   cancelBtn.addEventListener("click", () => {
     bubble.classList.remove("editing");
-    bubble.innerHTML        = escapeHtml(originalText).replace(/\n/g, "<br>");
-    bubble.dataset.rawText  = originalText;
+    _renderVoiceBubbleBody(
+      bubble,
+      originalText,
+      favoriteBtn,
+      currentFavorite,
+      transcriptionId ? Number(transcriptionId) : null,
+    );
+    if (typeof onCancel === "function") {
+      onCancel({
+        bubble,
+        wrap,
+        transcriptionId: transcriptionId ? Number(transcriptionId) : null,
+        text: originalText,
+        favorite: currentFavorite,
+      });
+    }
   });
 
   saveBtn.addEventListener("click", () => {
     const newText = ta.value.trim();
     bubble.classList.remove("editing");
-    bubble.innerHTML        = escapeHtml(newText).replace(/\n/g, "<br>");
-    bubble.dataset.rawText  = newText;
+    _renderVoiceBubbleBody(
+      bubble,
+      newText,
+      favoriteBtn,
+      currentFavorite,
+      transcriptionId ? Number(transcriptionId) : null,
+    );
+    if (transcriptionId && typeof pywebview !== "undefined" && pywebview.api && pywebview.api.update_transcription_text) {
+      pywebview.api.update_transcription_text(Number(transcriptionId), newText)
+        .then((updated) => {
+          if (updated && updated.text) {
+            bubble.dataset.rawText = updated.text;
+            _renderVoiceBubbleBody(
+              bubble,
+              updated.text,
+              favoriteBtn,
+              currentFavorite,
+              transcriptionId ? Number(transcriptionId) : null,
+            );
+          }
+          if (typeof onSave === "function") {
+            onSave({
+              bubble,
+              wrap,
+              transcriptionId: transcriptionId ? Number(transcriptionId) : null,
+              text: updated && updated.text ? updated.text : newText,
+              favorite: currentFavorite,
+              updated: updated || null,
+            });
+          }
+        })
+        .catch((e) => showSystem((e && e.message) || "Could not save note changes."));
+    } else if (typeof onSave === "function") {
+      onSave({
+        bubble,
+        wrap,
+        transcriptionId: transcriptionId ? Number(transcriptionId) : null,
+        text: newText,
+        favorite: currentFavorite,
+        updated: null,
+      });
+    }
   });
 }
+
+function _syncFavoritesOverlayCount(total = null) {
+  if (!nodesCount) return;
+  const count = total == null ? _favoritesOverlayItemsById.size : total;
+  if (count === 1) {
+    nodesCount.textContent = "1 favorite";
+  } else {
+    nodesCount.textContent = `${count} favorites`;
+  }
+}
+
+function _clearFavoritesOverlayFocus() {
+  if (_favoritesOverlayFocusedWrap) {
+    _favoritesOverlayFocusedWrap.remove();
+    _favoritesOverlayFocusedWrap = null;
+  }
+  if (_favoritesOverlayFocusedId != null) {
+    const item = _favoritesOverlayItemsById.get(String(_favoritesOverlayFocusedId));
+    if (item) {
+      item.wrap.classList.remove("nodes-grid-item-dimmed");
+    }
+  }
+  _favoritesOverlayFocusedId = null;
+  if (nodesFocusStage) {
+    nodesFocusStage.innerHTML = "";
+  }
+}
+
+function _removeFavoritesOverlayItem(transcriptionId) {
+  const id = String(transcriptionId);
+  const item = _favoritesOverlayItemsById.get(id);
+  if (!item) return;
+  if (_favoritesOverlayFocusedId === id) {
+    _clearFavoritesOverlayFocus();
+  }
+  item.wrap.remove();
+  _favoritesOverlayItemsById.delete(id);
+  if (_favoritesOverlayOpen) {
+    _syncFavoritesOverlayCount();
+    if (_favoritesOverlayItemsById.size === 0) {
+      _renderFavoritesOverlayEmpty();
+    }
+  }
+}
+
+function _renderFavoritesOverlayEmpty(message = "No favorites yet. Turn on the LED on a note to pin it here.") {
+  if (!nodesGrid) return;
+  nodesGrid.innerHTML = "";
+  const empty = document.createElement("div");
+  empty.className = "nodes-empty";
+  empty.textContent = message;
+  nodesGrid.appendChild(empty);
+  _syncFavoritesOverlayCount(0);
+}
+
+function _renderFavoritesOverlayRows(rows) {
+  if (!nodesGrid) return;
+  _favoritesOverlayItemsById.clear();
+  nodesGrid.innerHTML = "";
+
+  const normalizedRows = Array.isArray(rows)
+    ? rows.map((row) => _normalizeTranscriptionRecord(row)).filter(Boolean)
+    : [];
+
+  if (normalizedRows.length === 0) {
+    _renderFavoritesOverlayEmpty();
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  normalizedRows.forEach((row, index) => {
+    const item = _createVoiceBubble(row, {
+      mode: "overlay",
+      onFocus: (payload) => _focusFavoriteOverlayItem(payload),
+      onFavoriteChanged: ({ favorite, updated, record }) => {
+        const id = String((record && record.id) || row.id);
+        if (!favorite) {
+          _removeFavoritesOverlayItem(id);
+          return;
+        }
+        const existing = _favoritesOverlayItemsById.get(id);
+        if (!existing) return;
+        const nextRecord = _normalizeTranscriptionRecord(updated || record || row);
+        if (!nextRecord) return;
+        existing.record = nextRecord;
+        _renderVoiceBubbleBody(
+          existing.bubble,
+          nextRecord.text,
+          existing.favoriteBtn,
+          nextRecord.favorite,
+          nextRecord.id,
+        );
+      },
+    });
+    if (!item) return;
+    item.wrap.classList.add("nodes-grid-item");
+    item.wrap.style.setProperty("--enter-delay", `${index * 34}ms`);
+    item.record = row;
+    _favoritesOverlayItemsById.set(String(row.id), item);
+    frag.appendChild(item.wrap);
+  });
+
+  nodesGrid.appendChild(frag);
+  _syncFavoritesOverlayCount(normalizedRows.length);
+}
+
+function _openFavoritesOverlay() {
+  if (_favoritesOverlayOpen) return;
+  if (settingsOverlay.style.display !== "none") {
+    settingsOverlay.style.display = "none";
+    settingsBtn.classList.remove("open");
+  }
+  if (_favoritesOverlayCloseTimer) {
+    clearTimeout(_favoritesOverlayCloseTimer);
+    _favoritesOverlayCloseTimer = null;
+  }
+  _favoritesOverlayOpen = true;
+  document.body.classList.add("favorites-overlay-open");
+  nodesOverlay.hidden = false;
+  nodesBtn.classList.add("open");
+  _syncFavoritesOverlayCount(0);
+  requestAnimationFrame(() => {
+    nodesOverlay.classList.add("open");
+  });
+  _loadFavoritesOverlay();
+}
+
+function _closeFavoritesOverlay() {
+  if (!_favoritesOverlayOpen) return;
+  _favoritesOverlayOpen = false;
+  document.body.classList.remove("favorites-overlay-open");
+  nodesBtn.classList.remove("open");
+  _clearFavoritesOverlayFocus();
+  nodesOverlay.classList.remove("open");
+  if (_favoritesOverlayCloseTimer) {
+    clearTimeout(_favoritesOverlayCloseTimer);
+  }
+  _favoritesOverlayCloseTimer = setTimeout(() => {
+    if (!nodesOverlay.classList.contains("open")) {
+      nodesOverlay.hidden = true;
+    }
+    _favoritesOverlayCloseTimer = null;
+  }, 220);
+}
+
+async function _loadFavoritesOverlay() {
+  const token = ++_favoritesOverlayLoadToken;
+  if (typeof pywebview === "undefined" || !pywebview.api || !pywebview.api.get_favorite_transcriptions) {
+    _renderFavoritesOverlayEmpty("Favorites are unavailable right now.");
+    return;
+  }
+
+  try {
+    const rows = await pywebview.api.get_favorite_transcriptions();
+    if (token !== _favoritesOverlayLoadToken || !_favoritesOverlayOpen) return;
+    _renderFavoritesOverlayRows(rows);
+  } catch (e) {
+    if (token !== _favoritesOverlayLoadToken || !_favoritesOverlayOpen) return;
+    _renderFavoritesOverlayEmpty((e && e.message) || "Could not load favorite notes.");
+  }
+}
+
+function _focusFavoriteOverlayItem(payload) {
+  if (!_favoritesOverlayOpen || !payload || !payload.record || payload.record.id == null) return;
+
+  const id = String(payload.record.id);
+  const current = _favoritesOverlayItemsById.get(id);
+  if (!current) return;
+
+  if (_favoritesOverlayFocusedId === id) {
+    return;
+  }
+
+  _clearFavoritesOverlayFocus();
+
+  const rect = current.wrap.getBoundingClientRect();
+  const focusItem = _createVoiceBubble(current.record, {
+    mode: "focus",
+    onFavoriteChanged: ({ favorite, updated, record }) => {
+      const nextRecord = _normalizeTranscriptionRecord(updated || record || current.record);
+      if (!favorite) {
+        _removeFavoritesOverlayItem(id);
+        return;
+      }
+      if (!nextRecord) return;
+      const item = _favoritesOverlayItemsById.get(id);
+      if (!item) return;
+      item.record = nextRecord;
+      _renderVoiceBubbleBody(
+        item.bubble,
+        nextRecord.text,
+        item.favoriteBtn,
+        nextRecord.favorite,
+        nextRecord.id,
+      );
+      if (_favoritesOverlayFocusedId === id && _favoritesOverlayFocusedWrap) {
+        const focusedBubble = _favoritesOverlayFocusedWrap.querySelector(".msg.voice");
+        if (focusedBubble) {
+          focusedBubble.dataset.rawText = nextRecord.text;
+        }
+      }
+    },
+  });
+  if (!focusItem) return;
+
+  const focusWrap = focusItem.wrap;
+  focusWrap.classList.add("nodes-focus-wrap");
+  focusWrap.style.left = `${rect.left}px`;
+  focusWrap.style.top = `${rect.top}px`;
+  focusWrap.style.width = `${rect.width}px`;
+  focusWrap.style.minHeight = `${rect.height}px`;
+  focusWrap.style.opacity = "0";
+
+  nodesFocusStage.innerHTML = "";
+  nodesFocusStage.appendChild(focusWrap);
+  current.wrap.classList.add("nodes-grid-item-dimmed");
+  _favoritesOverlayFocusedId = id;
+  _favoritesOverlayFocusedWrap = focusWrap;
+
+  requestAnimationFrame(() => {
+    focusWrap.style.opacity = "1";
+    focusWrap.classList.add("is-focused");
+  });
+
+  window.setTimeout(() => {
+    if (!_favoritesOverlayOpen || _favoritesOverlayFocusedId !== id || !_favoritesOverlayFocusedWrap) return;
+    startEditBubble(focusItem.bubble, focusWrap, {
+      onSave: ({ text }) => {
+        const item = _favoritesOverlayItemsById.get(id);
+        if (!item) return;
+        item.record = {
+          ...item.record,
+          text,
+        };
+        _renderVoiceBubbleBody(
+          item.bubble,
+          text,
+          item.favoriteBtn,
+          item.record.favorite,
+          item.record.id,
+        );
+      },
+      onEscape: () => {
+        _closeFavoritesOverlay();
+      },
+    });
+  }, 220);
+}
+
+let _historyLoaded = false;
+function _loadSavedTranscriptions() {
+  if (_historyLoaded) return;
+  if (typeof pywebview === "undefined" || !pywebview.api || !pywebview.api.get_transcription_history) return;
+  _historyLoaded = true;
+  pywebview.api.get_transcription_history().then((rows) => {
+    if (!Array.isArray(rows) || rows.length === 0) return;
+    const frag = document.createDocumentFragment();
+    for (const row of rows) {
+      const item = _createVoiceBubble(row);
+      if (item) frag.appendChild(item.wrap);
+    }
+    messages.appendChild(frag);
+    scrollBottom();
+  }).catch((e) => {
+    _historyLoaded = false;
+    showSystem((e && e.message) || "Could not load saved notes.");
+  });
+}
+
+function _scheduleHistoryLoad() {
+  if (typeof pywebview !== "undefined" && pywebview.api && pywebview.api.get_transcription_history) {
+    _loadSavedTranscriptions();
+    return;
+  }
+  window.addEventListener("pywebviewready", _loadSavedTranscriptions, { once: true });
+}
+
+_scheduleHistoryLoad();
 
 /* ── Window open / close animations ─────────────────────────────────────── */
 function _startOpenAnimation() {
@@ -529,6 +1063,9 @@ closeBtn.addEventListener("click", () => {
 /* ── Settings ─────────────────────────────────────────────────────────────── */
 settingsBtn.addEventListener("click", (e) => {
   e.stopPropagation();
+  if (_favoritesOverlayOpen) {
+    _closeFavoritesOverlay();
+  }
   if (settingsOverlay.style.display === "none") {
     pywebview.api.get_settings().then((s) => {
       localWhisperModelSel.value           = s.local_whisper_model || "small";
@@ -562,6 +1099,9 @@ settingsOverlay.addEventListener("click", (e) => {
     settingsBtn.classList.remove("open");
   }
 });
+
+nodesBackdrop.addEventListener("click", _closeFavoritesOverlay);
+nodesClose.addEventListener("click", _closeFavoritesOverlay);
 
 settingsSave.addEventListener("click", async () => {
   if (!useHostedWhisperToggle.checked && !useLocalFallbackToggle.checked) {

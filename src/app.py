@@ -285,7 +285,8 @@ def _init_transcription_db() -> None:
                 source TEXT NOT NULL,
                 duration_ms INTEGER,
                 model TEXT,
-                is_local INTEGER DEFAULT 0
+                is_local INTEGER DEFAULT 0,
+                favorite INTEGER DEFAULT 0
             )
             """
         )
@@ -293,19 +294,91 @@ def _init_transcription_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_transcriptions_created_at ON transcriptions(created_at)"
         )
         # Migration: add new columns if they don't exist
-        try:
-            conn.execute("SELECT duration_ms FROM transcriptions LIMIT 1")
-        except sqlite3.OperationalError:
-            pass
-        else:
-            # Columns exist, check if we need to add is_local
-            try:
-                conn.execute("SELECT is_local FROM transcriptions LIMIT 1")
-            except sqlite3.OperationalError:
-                conn.execute(
-                    "ALTER TABLE transcriptions ADD COLUMN is_local INTEGER DEFAULT 0"
-                )
+        existing_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(transcriptions)").fetchall()
+        }
+        if "duration_ms" not in existing_columns:
+            conn.execute("ALTER TABLE transcriptions ADD COLUMN duration_ms INTEGER")
+        if "model" not in existing_columns:
+            conn.execute("ALTER TABLE transcriptions ADD COLUMN model TEXT")
+        if "is_local" not in existing_columns:
+            conn.execute("ALTER TABLE transcriptions ADD COLUMN is_local INTEGER DEFAULT 0")
+        if "favorite" not in existing_columns:
+            conn.execute("ALTER TABLE transcriptions ADD COLUMN favorite INTEGER DEFAULT 0")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_transcriptions_favorite ON transcriptions(favorite)"
+        )
         conn.commit()
+
+
+def _row_to_transcription_dict(row) -> dict | None:
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "created_at": row["created_at"],
+        "text": row["text"],
+        "source": row["source"],
+        "duration_ms": row["duration_ms"],
+        "model": row["model"],
+        "is_local": bool(row["is_local"]),
+        "favorite": bool(row["favorite"]),
+    }
+
+
+def _fetch_transcription_record(transcription_id: int) -> dict | None:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT id, created_at, text, source, duration_ms, model, is_local,
+                       COALESCE(favorite, 0) AS favorite
+                FROM transcriptions
+                WHERE id = ?
+                """,
+                (int(transcription_id),),
+            ).fetchone()
+            return _row_to_transcription_dict(row)
+    except Exception as e:
+        log.warning("Failed to fetch transcription %s: %s", transcription_id, e)
+        return None
+
+
+def _fetch_transcription_history(
+    limit: int = 1000,
+    favorites_only: bool = False,
+    newest_first: bool = False,
+) -> list[dict]:
+    try:
+        limit = max(1, min(int(limit), 5000))
+    except Exception:
+        limit = 1000
+    order = "DESC" if newest_first else "ASC"
+    where = "WHERE COALESCE(favorite, 0) = 1" if favorites_only else ""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                f"""
+                SELECT id, created_at, text, source, duration_ms, model, is_local,
+                       COALESCE(favorite, 0) AS favorite
+                FROM transcriptions
+                {where}
+                ORDER BY id {order}
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [
+                row_dict
+                for row_dict in (_row_to_transcription_dict(row) for row in rows)
+                if row_dict is not None
+            ]
+    except Exception as e:
+        log.warning("Failed to fetch transcription history: %s", e)
+        return []
 
 
 # ── Remote transcription ──────────────────────────────────────────────────────
@@ -583,8 +656,15 @@ class WhisperNoteAPI:
             wav_bytes
         )
         if text:
-            self._save_transcription(text, source, duration_ms, model, is_local)
-            self._emit("transcription_result", text)
+            record = self._save_transcription(text, source, duration_ms, model, is_local)
+            self._emit("transcription_result", record or {
+                "text": text,
+                "source": source or "unknown",
+                "duration_ms": duration_ms,
+                "model": model,
+                "is_local": is_local,
+                "favorite": False,
+            })
         else:
             self._emit("transcription_error", "nothing heard")
 
@@ -664,14 +744,18 @@ class WhisperNoteAPI:
         duration_ms: int | None = None,
         model: str | None = None,
         is_local: bool = False,
-    ) -> None:
+    ) -> dict | None:
         if not text.strip():
-            return
+            return None
         created_at = datetime.now(timezone.utc).isoformat()
         try:
             with sqlite3.connect(DB_PATH) as conn:
-                conn.execute(
-                    "INSERT INTO transcriptions (created_at, text, source, duration_ms, model, is_local) VALUES (?, ?, ?, ?, ?, ?)",
+                cur = conn.execute(
+                    """
+                    INSERT INTO transcriptions (
+                        created_at, text, source, duration_ms, model, is_local, favorite
+                    ) VALUES (?, ?, ?, ?, ?, ?, 0)
+                    """,
                     (
                         created_at,
                         text.strip(),
@@ -682,8 +766,70 @@ class WhisperNoteAPI:
                     ),
                 )
                 conn.commit()
+                transcription_id = cur.lastrowid
+            return _fetch_transcription_record(transcription_id)
         except Exception as e:
             log.warning("Failed to save transcription: %s", e)
+            return None
+
+    def get_transcription_history(self, limit: int = 1000) -> list[dict]:
+        return _fetch_transcription_history(limit)
+
+    def get_favorite_transcriptions(self, limit: int = 1000) -> list[dict]:
+        return _fetch_transcription_history(limit, favorites_only=True, newest_first=True)
+
+    def toggle_transcription_favorite(self, transcription_id: int, favorite=None) -> dict | None:
+        try:
+            transcription_id = int(transcription_id)
+        except Exception:
+            return None
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT COALESCE(favorite, 0) AS favorite FROM transcriptions WHERE id = ?",
+                    (transcription_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+                current = bool(row["favorite"])
+                if favorite is None:
+                    next_value = not current
+                else:
+                    next_value = bool(favorite)
+                conn.execute(
+                    "UPDATE transcriptions SET favorite = ? WHERE id = ?",
+                    (1 if next_value else 0, transcription_id),
+                )
+                conn.commit()
+            return _fetch_transcription_record(transcription_id)
+        except Exception as e:
+            log.warning("Failed to toggle favorite for %s: %s", transcription_id, e)
+            return None
+
+    def update_transcription_text(self, transcription_id: int, text: str) -> dict | None:
+        try:
+            transcription_id = int(transcription_id)
+        except Exception:
+            return None
+        cleaned = str(text).strip()
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.execute(
+                    "UPDATE transcriptions SET text = ? WHERE id = ?",
+                    (cleaned, transcription_id),
+                )
+                if cur.rowcount == 0:
+                    return None
+                conn.commit()
+            return _fetch_transcription_record(transcription_id)
+        except Exception as e:
+            log.warning(
+                "Failed to update transcription text for %s: %s",
+                transcription_id,
+                e,
+            )
+            return None
 
     # ── File transcription ────────────────────────────────────────────────────────
 
@@ -740,8 +886,15 @@ class WhisperNoteAPI:
                 wav_bytes
             )
             if text:
-                self._save_transcription(text, source, duration_ms, model, is_local)
-                self._emit("transcription_result", text)
+                record = self._save_transcription(text, source, duration_ms, model, is_local)
+                self._emit("transcription_result", record or {
+                    "text": text,
+                    "source": source or "unknown",
+                    "duration_ms": duration_ms,
+                    "model": model,
+                    "is_local": is_local,
+                    "favorite": False,
+                })
             else:
                 self._emit("transcription_error", "no text recognized")
         except Exception as e:
@@ -812,8 +965,15 @@ class WhisperNoteAPI:
                 wav_bytes
             )
             if text:
-                self._save_transcription(text, source, duration_ms, model, is_local)
-                self._emit("transcription_result", text)
+                record = self._save_transcription(text, source, duration_ms, model, is_local)
+                self._emit("transcription_result", record or {
+                    "text": text,
+                    "source": source or "unknown",
+                    "duration_ms": duration_ms,
+                    "model": model,
+                    "is_local": is_local,
+                    "favorite": False,
+                })
             else:
                 self._emit("transcription_error", "no text recognized")
         except Exception as e:

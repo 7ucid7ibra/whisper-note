@@ -21,6 +21,19 @@
     <button class="info-btn" id="infoBtn" title="How it works" aria-label="How it works">
       i
     </button>
+    <button class="nodes-btn" id="nodesBtn" title="Favorite notes" aria-label="Open favorite notes">
+      <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <rect x="3" y="3" width="4.5" height="4.5" rx="1.1" />
+        <rect x="8.25" y="3" width="4.5" height="4.5" rx="1.1" />
+        <rect x="13.5" y="3" width="3.5" height="4.5" rx="1.1" />
+        <rect x="3" y="8.25" width="4.5" height="4.5" rx="1.1" />
+        <rect x="8.25" y="8.25" width="4.5" height="4.5" rx="1.1" />
+        <rect x="13.5" y="8.25" width="3.5" height="4.5" rx="1.1" />
+        <rect x="3" y="13.5" width="4.5" height="3.5" rx="1.1" />
+        <rect x="8.25" y="13.5" width="4.5" height="3.5" rx="1.1" />
+        <rect x="13.5" y="13.5" width="3.5" height="3.5" rx="1.1" />
+      </svg>
+    </button>
     <div class="help-card" id="helpCard" role="note" aria-label="Shortcuts and tips">
       <p><kbd>⌃⌘A</kbd> Start/stop recording</p>
       <p><kbd>Space</kbd> Pause/resume while recording</p>
@@ -173,6 +186,24 @@
       </div>
       <div class="settings-footer">
         <button class="settings-save-btn" id="settingsSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="nodes-overlay" id="nodesOverlay" hidden>
+    <div class="nodes-backdrop" id="nodesBackdrop"></div>
+    <div class="nodes-modal" id="nodesModal" role="dialog" aria-modal="true" aria-label="Favorite notes">
+      <button class="nodes-close" id="nodesClose" title="Close">×</button>
+      <div class="nodes-header">
+        <div>
+          <div class="nodes-title">Favorite notes</div>
+          <div class="nodes-subtitle">Click a note to focus and edit it.</div>
+        </div>
+        <div class="nodes-count" id="nodesCount"></div>
+      </div>
+      <div class="nodes-stage">
+        <div class="nodes-grid" id="nodesGrid"></div>
+        <div class="nodes-focus-stage" id="nodesFocusStage"></div>
       </div>
     </div>
   </div>
