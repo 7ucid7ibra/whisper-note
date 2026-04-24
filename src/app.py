@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 import wave
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Prevent libiomp5 crash on macOS with torch + ctranslate2
@@ -65,8 +65,17 @@ _ENV_USE_HOSTED_WHISPER = "USE_HOSTED_WHISPER"
 _ENV_USE_LOCAL_FALLBACK = "USE_LOCAL_FALLBACK"
 _ENV_LOCAL_WHISPER_MODEL = "LOCAL_WHISPER_MODEL"
 _ENV_TRANSCRIPTION_LANGUAGE = "TRANSCRIPTION_LANGUAGE"
+_ENV_HISTORY_WINDOW = "HISTORY_WINDOW"
 # Legacy key retained for backward-compat defaults only.
 _ENV_FORCE_LOCAL = "FORCE_LOCAL"
+
+_HISTORY_WINDOWS: dict[str, timedelta | None] = {
+    "all": None,
+    "24h": timedelta(hours=24),
+    "7d": timedelta(days=7),
+    "30d": timedelta(days=30),
+    "90d": timedelta(days=90),
+}
 
 # ── Recording state (module-level so callbacks can reach it) ──────────────────
 _SAMPLE_RATE = 16000
@@ -273,6 +282,15 @@ def _get_remote_whisper_model(env: dict, fallback: bool) -> str:
     return model or "medium"
 
 
+def _normalize_history_window(value: str | None) -> str:
+    key = str(value or "all").strip().lower()
+    return key if key in _HISTORY_WINDOWS else "all"
+
+
+def _get_history_window(env: dict) -> str:
+    return _normalize_history_window(env.get(_ENV_HISTORY_WINDOW))
+
+
 def _init_transcription_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
@@ -350,13 +368,22 @@ def _fetch_transcription_history(
     limit: int = 1000,
     favorites_only: bool = False,
     newest_first: bool = False,
+    history_window: str = "all",
 ) -> list[dict]:
     try:
         limit = max(1, min(int(limit), 5000))
     except Exception:
         limit = 1000
     order = "DESC" if newest_first else "ASC"
-    where = "WHERE COALESCE(favorite, 0) = 1" if favorites_only else ""
+    where_clauses: list[str] = []
+    params: list[object] = []
+    if favorites_only:
+        where_clauses.append("COALESCE(favorite, 0) = 1")
+    cutoff = _HISTORY_WINDOWS.get(_normalize_history_window(history_window))
+    if cutoff is not None:
+        where_clauses.append("created_at >= ?")
+        params.append((datetime.now(timezone.utc) - cutoff).isoformat())
+    where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
@@ -369,7 +396,7 @@ def _fetch_transcription_history(
                 ORDER BY id {order}
                 LIMIT ?
                 """,
-                (limit,),
+                (*params, limit),
             ).fetchall()
             return [
                 row_dict
@@ -442,15 +469,83 @@ class WhisperNoteAPI:
 
     def __init__(self) -> None:
         self._window = None
+        self._favorites_window = None
+        self._favorites_visible = False
 
     def set_window(self, window) -> None:
         self._window = window
+
+    def set_favorites_window(self, window) -> None:
+        self._favorites_window = window
 
     def _emit(self, event: str, data=None) -> None:
         if not self._window:
             return
         payload = json.dumps({"event": event, "data": data})
         self._window.evaluate_js(f"window.__onPythonEvent({json.dumps(payload)})")
+
+    def _emit_favorites(self, event: str, data=None) -> None:
+        if not self._favorites_window:
+            return
+        payload = json.dumps({"event": event, "data": data})
+        self._favorites_window.evaluate_js(f"window.__onPythonEvent({json.dumps(payload)})")
+
+    def _notify_favorites_changed(self) -> None:
+        try:
+            self._emit_favorites("favorites_changed", None)
+        except Exception as e:
+            log.debug("Failed to notify favorites window: %s", e)
+        try:
+            self._emit("favorites_changed", None)
+        except Exception as e:
+            log.debug("Failed to notify main window: %s", e)
+
+    def _notify_history_changed(self) -> None:
+        if not self._window:
+            return
+        try:
+            self._emit("history_settings_changed", None)
+        except Exception as e:
+            log.debug("Failed to notify history view: %s", e)
+
+    def show_favorites_overlay(self) -> None:
+        if not self._favorites_window:
+            return
+        try:
+            self._favorites_window.show()
+            self._favorites_visible = True
+            self.refresh_favorites_overlay()
+        except Exception as e:
+            log.warning("Failed to show favorites overlay: %s", e)
+
+    def hide_favorites_overlay(self) -> None:
+        if not self._favorites_window:
+            return
+        try:
+            self._favorites_window.hide()
+            self._favorites_visible = False
+            self._emit_favorites("favorites_window_closed", None)
+        except Exception as e:
+            log.warning("Failed to hide favorites overlay: %s", e)
+
+    def toggle_favorites_overlay(self) -> None:
+        if not self._favorites_window:
+            return
+        try:
+            if self._favorites_visible:
+                self.hide_favorites_overlay()
+            else:
+                self.show_favorites_overlay()
+        except Exception as e:
+            log.warning("Failed to toggle favorites overlay: %s", e)
+
+    def refresh_favorites_overlay(self) -> None:
+        if not self._favorites_window:
+            return
+        try:
+            self._emit_favorites("favorites_refresh", None)
+        except Exception as e:
+            log.debug("Failed to refresh favorites overlay: %s", e)
 
     # ── Recording API (called from JS button and global hotkey) ───────────────
 
@@ -773,7 +868,11 @@ class WhisperNoteAPI:
             return None
 
     def get_transcription_history(self, limit: int = 1000) -> list[dict]:
-        return _fetch_transcription_history(limit)
+        env = load_env()
+        return _fetch_transcription_history(
+            limit,
+            history_window=_get_history_window(env),
+        )
 
     def get_favorite_transcriptions(self, limit: int = 1000) -> list[dict]:
         return _fetch_transcription_history(limit, favorites_only=True, newest_first=True)
@@ -802,6 +901,7 @@ class WhisperNoteAPI:
                     (1 if next_value else 0, transcription_id),
                 )
                 conn.commit()
+            self._notify_favorites_changed()
             return _fetch_transcription_record(transcription_id)
         except Exception as e:
             log.warning("Failed to toggle favorite for %s: %s", transcription_id, e)
@@ -822,6 +922,7 @@ class WhisperNoteAPI:
                 if cur.rowcount == 0:
                     return None
                 conn.commit()
+            self._notify_favorites_changed()
             return _fetch_transcription_record(transcription_id)
         except Exception as e:
             log.warning(
@@ -1064,6 +1165,7 @@ class WhisperNoteAPI:
             "use_hosted_whisper": use_hosted_whisper,
             "use_local_fallback": use_local_fallback,
             "transcription_language": env.get(_ENV_TRANSCRIPTION_LANGUAGE, "auto"),
+            "history_window": _get_history_window(env),
         }
 
     def save_settings(self, data: dict) -> None:
@@ -1110,11 +1212,14 @@ class WhisperNoteAPI:
                 env[_ENV_TRANSCRIPTION_LANGUAGE] = lang
             else:
                 env[_ENV_TRANSCRIPTION_LANGUAGE] = "auto"
+        if "history_window" in data:
+            env[_ENV_HISTORY_WINDOW] = _normalize_history_window(data["history_window"])
 
         use_hosted_whisper, use_local_fallback = _derive_transcription_toggles(env)
         if not use_hosted_whisper and not use_local_fallback:
             raise ValueError("Enable hosted or local transcription.")
         save_env(env)
+        self._notify_history_changed()
 
     def _apply_on_top(self, enabled: bool) -> None:
         try:
@@ -1148,16 +1253,41 @@ class WhisperNoteAPI:
     def _do_close(self) -> None:
         self._save_geometry()
         _teardown_global_hotkey()
+
+        def _destroy_window_async(target_window) -> None:
+            if not target_window:
+                return
+
+            try:
+                target_window.destroy()
+            except Exception:
+                pass
+
         try:
+            if self._favorites_window:
+                try:
+                    self._favorites_window.hide()
+                except Exception:
+                    pass
             if self._window:
-                # Ensure window teardown runs on Cocoa main thread.
+                _destroy_window_async(self._window)
+            if self._favorites_window:
+                _destroy_window_async(self._favorites_window)
+            try:
                 from PyObjCTools import AppHelper
 
-                AppHelper.callAfter(self._window.destroy)
+                AppHelper.stopEventLoop()
+            except Exception as e:
+                log.debug("Failed to stop Cocoa event loop: %s", e)
         except Exception:
             try:
                 if self._window:
                     self._window.destroy()
+            except Exception:
+                pass
+            try:
+                if self._favorites_window:
+                    self._favorites_window.destroy()
             except Exception:
                 pass
 
@@ -1286,7 +1416,7 @@ def _teardown_global_hotkey() -> None:
 
 
 def _graceful_shutdown_or_force_exit(timeout_s: float = 1.5) -> None:
-    """Try graceful shutdown; force-exit if non-daemon threads keep process alive."""
+    """Best-effort shutdown cleanup after the GUI loop has already exited."""
     _teardown_global_hotkey()
     _shutdown_whisper_cache()
 
@@ -1308,10 +1438,9 @@ def _graceful_shutdown_or_force_exit(timeout_s: float = 1.5) -> None:
     ]
     if lingering:
         log.warning(
-            "Forcing exit; lingering non-daemon threads: %s", ", ".join(lingering)
+            "Lingering non-daemon threads after GUI shutdown: %s",
+            ", ".join(lingering),
         )
-        logging.shutdown()
-        os._exit(0)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -1357,6 +1486,7 @@ def main() -> None:
         y = None
 
     ui_dir = _resource_root() / "ui"
+    favorites_url = (ui_dir / "favorites.html").as_uri()
 
     window = webview.create_window(
         "whisper note",
@@ -1374,10 +1504,33 @@ def main() -> None:
     )
     api.set_window(window)
 
+    favorites_window = webview.create_window(
+        "whisper note • favorites",
+        url=favorites_url,
+        js_api=api,
+        width=max(w, 980),
+        height=max(h, 700),
+        x=None,
+        y=None,
+        frameless=True,
+        fullscreen=False,
+        on_top=on_top,
+        transparent=False,
+        resizable=True,
+        hidden=True,
+        easy_drag=False,
+        shadow=True,
+        focus=True,
+        min_size=(760, 520),
+        background_color="#0a0d14",
+    )
+    api.set_favorites_window(favorites_window)
+
     if sys.platform == "darwin":
         threading.Thread(target=_preflight_microphone_permission, daemon=True).start()
 
     window.events.loaded += lambda: _setup_global_hotkey(window, api)
+    favorites_window.events.loaded += lambda: api.refresh_favorites_overlay()
 
     try:
         webview.start(debug=False)
@@ -1390,5 +1543,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    multiprocessing.freeze_support()
+    if getattr(sys, "frozen", False):
+        multiprocessing.freeze_support()
     main()

@@ -12,6 +12,7 @@ let   _levelHead = 0;
 
 let _transcribingEl    = null;
 let _transcribingCount = 0;
+let _historyEmptyEl    = null;
 
 let _favoritesOverlayOpen = false;
 let _favoritesOverlayFocusedWrap = null;
@@ -19,6 +20,8 @@ let _favoritesOverlayFocusedId = null;
 let _favoritesOverlayItemsById = new Map();
 let _favoritesOverlayLoadToken = 0;
 let _favoritesOverlayCloseTimer = null;
+let _favoritesLoadRetryTimer = null;
+let _favoritesPageLoadToken = 0;
 
 /* ── DOM refs ─────────────────────────────────────────────────────────────── */
 const messages                   = document.getElementById("messages");
@@ -43,6 +46,7 @@ const alwaysOnTopToggle          = document.getElementById("alwaysOnTopToggle");
 const useHostedWhisperToggle     = document.getElementById("useHostedWhisperToggle");
 const useLocalFallbackToggle     = document.getElementById("useLocalFallbackToggle");
 const languageSelect             = document.getElementById("languageSelect");
+const historyWindowSelect        = document.getElementById("historyWindowSelect");
 const nodesOverlay               = document.getElementById("nodesOverlay");
 const nodesBackdrop              = document.getElementById("nodesBackdrop");
 const nodesModal                 = document.getElementById("nodesModal");
@@ -50,6 +54,12 @@ const nodesClose                 = document.getElementById("nodesClose");
 const nodesGrid                  = document.getElementById("nodesGrid");
 const nodesFocusStage            = document.getElementById("nodesFocusStage");
 const nodesCount                 = document.getElementById("nodesCount");
+
+const APP_VIEW = new URLSearchParams(window.location.search).get("view") || "main";
+const IS_FAVORITES_VIEW = document.body.classList.contains("favorites-view") || APP_VIEW === "favorites";
+if (IS_FAVORITES_VIEW) {
+  document.body.classList.add("favorites-view");
+}
 
 /* ── Sounds (Web Audio API — no external files needed) ────────────────────── */
 function _beep(freq, duration, vol = 0.07, delay = 0) {
@@ -148,6 +158,35 @@ window.__onPythonEvent = (raw) => {
       showSystem(data || "transcription failed");
       break;
 
+    case "favorites_refresh":
+    case "favorites_window_opened":
+      if (IS_FAVORITES_VIEW) {
+        _loadFavoritesPage();
+      }
+      break;
+
+    case "favorites_window_closed":
+      if (IS_FAVORITES_VIEW) {
+        _favoritesOverlayOpen = false;
+        nodesOverlay.classList.remove("open");
+        nodesOverlay.hidden = true;
+      }
+      break;
+
+    case "favorites_changed":
+      if (IS_FAVORITES_VIEW) {
+        _loadFavoritesPage();
+      } else {
+        _refreshHistoryLoad({ preserveScroll: true });
+      }
+      break;
+
+    case "history_settings_changed":
+      if (!IS_FAVORITES_VIEW) {
+        _refreshHistoryLoad();
+      }
+      break;
+
     case "error":
       showSystem(data);
       break;
@@ -197,6 +236,156 @@ function showSystem(msg) {
 }
 function scrollBottom() {
   messages.scrollTop = messages.scrollHeight;
+}
+
+function _apiReady() {
+  return typeof pywebview !== "undefined" && pywebview.api;
+}
+
+function _whenApiReady(callback) {
+  if (_apiReady()) {
+    callback();
+    return;
+  }
+  window.addEventListener("pywebviewready", () => {
+    if (_apiReady()) callback();
+  }, { once: true });
+}
+
+function _clearHistoryEmpty() {
+  if (_historyEmptyEl) {
+    _historyEmptyEl.remove();
+    _historyEmptyEl = null;
+  }
+}
+
+function _renderHistoryEmpty(message) {
+  if (!messages) return;
+  _clearHistoryEmpty();
+  const empty = document.createElement("div");
+  empty.className = "history-empty";
+  empty.textContent = message;
+  messages.appendChild(empty);
+  _historyEmptyEl = empty;
+}
+
+function _refreshHistoryLoad({ preserveScroll = false } = {}) {
+  if (IS_FAVORITES_VIEW) return;
+  const scrollTop = preserveScroll ? messages.scrollTop : 0;
+  _historyLoaded = false;
+  messages.innerHTML = "";
+  _clearHistoryEmpty();
+  _scheduleHistoryLoad({ preserveScroll, scrollTop });
+}
+
+function _removeFavoritesPageItem(transcriptionId) {
+  const id = String(transcriptionId);
+  const item = _favoritesOverlayItemsById.get(id);
+  if (!item) return;
+  item.wrap.remove();
+  _favoritesOverlayItemsById.delete(id);
+  _syncFavoritesOverlayCount();
+  if (_favoritesOverlayItemsById.size === 0) {
+    _renderFavoritesPageEmpty();
+  }
+}
+
+function _renderFavoritesPageEmpty(message = "No favorites yet. Turn on the LED on a note to pin it here.") {
+  if (!messages) return;
+  _favoritesOverlayItemsById.clear();
+  messages.innerHTML = "";
+  _clearHistoryEmpty();
+  const empty = document.createElement("div");
+  empty.className = "history-empty";
+  empty.textContent = message;
+  messages.appendChild(empty);
+  _historyEmptyEl = empty;
+  _syncFavoritesOverlayCount(0);
+}
+
+function _renderFavoritesPageRows(rows) {
+  if (!messages) return;
+  _favoritesOverlayItemsById.clear();
+  messages.innerHTML = "";
+  _clearHistoryEmpty();
+
+  const normalizedRows = Array.isArray(rows)
+    ? rows.map((row) => _normalizeTranscriptionRecord(row)).filter(Boolean)
+    : [];
+
+  if (normalizedRows.length === 0) {
+    _renderFavoritesPageEmpty();
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  normalizedRows.forEach((row, index) => {
+    const item = _createVoiceBubble(row, {
+      mode: "overlay",
+      onFocus: (payload) => {
+        if (!payload || !payload.bubble || !payload.wrap) return;
+        startEditBubble(payload.bubble, payload.wrap, {
+          onEscape: () => {
+            _closeFavoritesWindow();
+          },
+        });
+      },
+      onFavoriteChanged: ({ favorite, updated, record }) => {
+        const id = String((record && record.id) || row.id);
+        if (!favorite) {
+          _removeFavoritesPageItem(id);
+          return;
+        }
+        const existing = _favoritesOverlayItemsById.get(id);
+        if (!existing) return;
+        const nextRecord = _normalizeTranscriptionRecord(updated || record || row);
+        if (!nextRecord) return;
+        existing.record = nextRecord;
+        _renderVoiceBubbleBody(
+          existing.bubble,
+          nextRecord.text,
+          existing.favoriteBtn,
+          nextRecord.favorite,
+          nextRecord.id,
+        );
+      },
+    });
+    if (!item) return;
+    item.wrap.classList.add("favorites-grid-item");
+    item.wrap.style.setProperty("--enter-delay", `${index * 34}ms`);
+    item.record = row;
+    _favoritesOverlayItemsById.set(String(row.id), item);
+    frag.appendChild(item.wrap);
+  });
+
+  messages.appendChild(frag);
+  _syncFavoritesOverlayCount(normalizedRows.length);
+}
+
+async function _loadFavoritesPage() {
+  const token = ++_favoritesPageLoadToken;
+  if (!_apiReady() || !pywebview.api.get_favorite_transcriptions) {
+    _renderFavoritesPageEmpty("Loading favorite notes…");
+    if (_favoritesLoadRetryTimer) clearTimeout(_favoritesLoadRetryTimer);
+    _favoritesLoadRetryTimer = setTimeout(() => {
+      if (IS_FAVORITES_VIEW) _loadFavoritesPage();
+    }, 60);
+    return;
+  }
+
+  if (_favoritesLoadRetryTimer) {
+    clearTimeout(_favoritesLoadRetryTimer);
+    _favoritesLoadRetryTimer = null;
+  }
+
+  try {
+    const rows = await pywebview.api.get_favorite_transcriptions();
+    if (token !== _favoritesPageLoadToken || !IS_FAVORITES_VIEW) return;
+    _renderFavoritesPageRows(rows);
+  } catch (e) {
+    if (token !== _favoritesPageLoadToken || !IS_FAVORITES_VIEW) return;
+    _renderFavoritesPageEmpty((e && e.message) || "Could not load favorite notes.");
+  }
 }
 
 /* ── Waveform ─────────────────────────────────────────────────────────────── */
@@ -381,6 +570,14 @@ micBtn.addEventListener("click", () => {
 document.addEventListener("keydown", (e) => {
   const inInput = ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName);
 
+  if (IS_FAVORITES_VIEW) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      _closeFavoritesWindow();
+    }
+    return;
+  }
+
   if (_favoritesOverlayOpen) {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -416,11 +613,14 @@ document.addEventListener("keydown", (e) => {
 
 nodesBtn.addEventListener("click", (e) => {
   e.stopPropagation();
-  if (_favoritesOverlayOpen) {
-    _closeFavoritesOverlay();
-  } else {
-    _openFavoritesOverlay();
+  if (IS_FAVORITES_VIEW) {
+    return;
   }
+  _whenApiReady(() => {
+    if (pywebview.api && pywebview.api.toggle_favorites_overlay) {
+      pywebview.api.toggle_favorites_overlay();
+    }
+  });
 });
 
 /* ── Voice bubble ─────────────────────────────────────────────────────────── */
@@ -502,7 +702,7 @@ function _createVoiceBubble(record, options = {}) {
   const bubble = document.createElement("div");
   bubble.className = "msg voice";
   bubble.dataset.mode = mode;
-  bubble.title = mode === "main" ? "Click to copy" : "Click to edit";
+  bubble.title = mode === "main" ? "Click to copy" : "Click to copy, double-click to edit";
   if (mode !== "main") {
     bubble.classList.add("nodes-note");
   }
@@ -536,8 +736,27 @@ function _createVoiceBubble(record, options = {}) {
       setTimeout(() => bubble.classList.remove("bubble-copied"), 700);
     });
   } else if (typeof onFocus === "function") {
+    let clickTimer = null;
+    const copyBubble = () => {
+      navigator.clipboard.writeText(bubble.dataset.rawText || bubble.textContent.trim())
+        .catch(() => {});
+      bubble.classList.add("bubble-copied");
+      setTimeout(() => bubble.classList.remove("bubble-copied"), 700);
+    };
     bubble.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (clickTimer) clearTimeout(clickTimer);
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        copyBubble();
+      }, 180);
+    });
+    bubble.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
+      }
       onFocus({
         record: normalized,
         wrap,
@@ -608,6 +827,7 @@ async function _toggleFavoriteBubble(bubble, favoriteBtn, options = {}) {
 function appendVoiceBubble(record, { scroll = true } = {}) {
   const item = _createVoiceBubble(record);
   if (!item) return null;
+  _clearHistoryEmpty();
   messages.appendChild(item.wrap);
   if (scroll) scrollBottom();
   return item.bubble;
@@ -621,6 +841,7 @@ function startEditBubble(bubble, wrap, options = {}) {  // eslint-disable-line n
   } = options || {};
   if (bubble.classList.contains("editing")) return;
   bubble.classList.add("editing");
+  const isConstrainedCard = !!bubble.closest(".nodes-grid-item") || !!bubble.closest(".nodes-focus-wrap");
 
   const originalText = bubble.dataset.rawText || bubble.textContent.trim();
   const transcriptionId = bubble.dataset.transcriptionId;
@@ -650,9 +871,16 @@ function startEditBubble(bubble, wrap, options = {}) {  // eslint-disable-line n
   bubble.appendChild(ta);
   bubble.appendChild(btnRow);
 
-  const resize = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
-  ta.addEventListener("input", resize);
-  resize();
+  if (isConstrainedCard) {
+    ta.style.flex = "1 1 auto";
+    ta.style.minHeight = "0";
+    ta.style.overflowY = "auto";
+    ta.style.overflowX = "hidden";
+  } else {
+    const resize = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
+    ta.addEventListener("input", resize);
+    resize();
+  }
   ta.focus();
   ta.setSelectionRange(ta.value.length, ta.value.length);
 
@@ -674,7 +902,9 @@ function startEditBubble(bubble, wrap, options = {}) {  // eslint-disable-line n
     }
   });
 
-  cancelBtn.addEventListener("click", () => {
+  cancelBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     bubble.classList.remove("editing");
     _renderVoiceBubbleBody(
       bubble,
@@ -694,7 +924,9 @@ function startEditBubble(bubble, wrap, options = {}) {  // eslint-disable-line n
     }
   });
 
-  saveBtn.addEventListener("click", () => {
+  saveBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const newText = ta.value.trim();
     bubble.classList.remove("editing");
     _renderVoiceBubbleBody(
@@ -740,6 +972,12 @@ function startEditBubble(bubble, wrap, options = {}) {  // eslint-disable-line n
       });
     }
   });
+}
+
+function _closeFavoritesWindow() {
+  if (_apiReady() && pywebview.api.hide_favorites_overlay) {
+    pywebview.api.hide_favorites_overlay();
+  }
 }
 
 function _syncFavoritesOverlayCount(total = null) {
@@ -848,31 +1086,29 @@ function _renderFavoritesOverlayRows(rows) {
 }
 
 function _openFavoritesOverlay() {
-  if (_favoritesOverlayOpen) return;
-  if (settingsOverlay.style.display !== "none") {
-    settingsOverlay.style.display = "none";
-    settingsBtn.classList.remove("open");
-  }
-  if (_favoritesOverlayCloseTimer) {
-    clearTimeout(_favoritesOverlayCloseTimer);
-    _favoritesOverlayCloseTimer = null;
-  }
-  _favoritesOverlayOpen = true;
-  document.body.classList.add("favorites-overlay-open");
-  nodesOverlay.hidden = false;
-  nodesBtn.classList.add("open");
-  _syncFavoritesOverlayCount(0);
-  requestAnimationFrame(() => {
+  if (IS_FAVORITES_VIEW) {
+    nodesOverlay.hidden = false;
+    _favoritesOverlayOpen = true;
+    document.body.classList.add("favorites-overlay-open");
     nodesOverlay.classList.add("open");
-  });
-  _loadFavoritesOverlay();
+    _loadFavoritesOverlay();
+    return;
+  }
+  if (typeof pywebview !== "undefined" && pywebview.api && pywebview.api.show_favorites_overlay) {
+    pywebview.api.show_favorites_overlay();
+  }
 }
 
 function _closeFavoritesOverlay() {
+  if (!IS_FAVORITES_VIEW) {
+    if (typeof pywebview !== "undefined" && pywebview.api && pywebview.api.hide_favorites_overlay) {
+      pywebview.api.hide_favorites_overlay();
+    }
+    return;
+  }
   if (!_favoritesOverlayOpen) return;
   _favoritesOverlayOpen = false;
   document.body.classList.remove("favorites-overlay-open");
-  nodesBtn.classList.remove("open");
   _clearFavoritesOverlayFocus();
   nodesOverlay.classList.remove("open");
   if (_favoritesOverlayCloseTimer) {
@@ -883,14 +1119,26 @@ function _closeFavoritesOverlay() {
       nodesOverlay.hidden = true;
     }
     _favoritesOverlayCloseTimer = null;
+    if (typeof pywebview !== "undefined" && pywebview.api && pywebview.api.hide_favorites_overlay) {
+      pywebview.api.hide_favorites_overlay();
+    }
   }, 220);
 }
 
 async function _loadFavoritesOverlay() {
   const token = ++_favoritesOverlayLoadToken;
   if (typeof pywebview === "undefined" || !pywebview.api || !pywebview.api.get_favorite_transcriptions) {
-    _renderFavoritesOverlayEmpty("Favorites are unavailable right now.");
+    _renderFavoritesOverlayEmpty("Loading favorite notes…");
+    if (_favoritesLoadRetryTimer) clearTimeout(_favoritesLoadRetryTimer);
+    _favoritesLoadRetryTimer = setTimeout(() => {
+      if (_favoritesOverlayOpen) _loadFavoritesOverlay();
+    }, 60);
     return;
+  }
+
+  if (_favoritesLoadRetryTimer) {
+    clearTimeout(_favoritesLoadRetryTimer);
+    _favoritesLoadRetryTimer = null;
   }
 
   try {
@@ -899,7 +1147,8 @@ async function _loadFavoritesOverlay() {
     _renderFavoritesOverlayRows(rows);
   } catch (e) {
     if (token !== _favoritesOverlayLoadToken || !_favoritesOverlayOpen) return;
-    _renderFavoritesOverlayEmpty((e && e.message) || "Could not load favorite notes.");
+    const message = (e && e.message) || "Could not load favorite notes.";
+    _renderFavoritesOverlayEmpty(message);
   }
 }
 
@@ -991,34 +1240,51 @@ function _focusFavoriteOverlayItem(payload) {
 }
 
 let _historyLoaded = false;
-function _loadSavedTranscriptions() {
+function _loadSavedTranscriptions({ preserveScroll = false, scrollTop = 0 } = {}) {
   if (_historyLoaded) return;
   if (typeof pywebview === "undefined" || !pywebview.api || !pywebview.api.get_transcription_history) return;
   _historyLoaded = true;
   pywebview.api.get_transcription_history().then((rows) => {
-    if (!Array.isArray(rows) || rows.length === 0) return;
+    messages.innerHTML = "";
+    _clearHistoryEmpty();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      _renderHistoryEmpty("No notes in this history window.");
+      return;
+    }
     const frag = document.createDocumentFragment();
     for (const row of rows) {
       const item = _createVoiceBubble(row);
       if (item) frag.appendChild(item.wrap);
     }
     messages.appendChild(frag);
-    scrollBottom();
+    if (preserveScroll) {
+      const maxScrollTop = Math.max(0, messages.scrollHeight - messages.clientHeight);
+      messages.scrollTop = Math.min(scrollTop, maxScrollTop);
+    } else {
+      scrollBottom();
+    }
   }).catch((e) => {
     _historyLoaded = false;
+    _clearHistoryEmpty();
     showSystem((e && e.message) || "Could not load saved notes.");
   });
 }
 
-function _scheduleHistoryLoad() {
+function _scheduleHistoryLoad(options = {}) {
   if (typeof pywebview !== "undefined" && pywebview.api && pywebview.api.get_transcription_history) {
-    _loadSavedTranscriptions();
+    _loadSavedTranscriptions(options);
     return;
   }
-  window.addEventListener("pywebviewready", _loadSavedTranscriptions, { once: true });
+  window.addEventListener("pywebviewready", () => _loadSavedTranscriptions(options), { once: true });
 }
 
-_scheduleHistoryLoad();
+function _scheduleFavoritesLoad() {
+  if (IS_FAVORITES_VIEW) {
+    _loadFavoritesPage();
+    return;
+  }
+  _loadFavoritesOverlay();
+}
 
 /* ── Window open / close animations ─────────────────────────────────────── */
 function _startOpenAnimation() {
@@ -1039,6 +1305,12 @@ function _startOpenAnimation() {
 
 _startOpenAnimation();
 
+if (IS_FAVORITES_VIEW) {
+  _loadFavoritesPage();
+} else {
+  _scheduleHistoryLoad();
+}
+
 document.body.addEventListener("animationend", function onOpen(e) {
   if (e.animationName === "windowOpen") {
     document.body.classList.remove("opening");
@@ -1050,6 +1322,10 @@ let _closeInFlight = false;
 
 /* ── Close button ─────────────────────────────────────────────────────────── */
 closeBtn.addEventListener("click", () => {
+  if (IS_FAVORITES_VIEW) {
+    _closeFavoritesWindow();
+    return;
+  }
   if (_closeInFlight) return;
   _closeInFlight = true;
   document.body.classList.add("closing");
@@ -1067,21 +1343,26 @@ settingsBtn.addEventListener("click", (e) => {
     _closeFavoritesOverlay();
   }
   if (settingsOverlay.style.display === "none") {
-    pywebview.api.get_settings().then((s) => {
-      localWhisperModelSel.value           = s.local_whisper_model || "small";
-      transcriberIpInput.value             = s.transcriber_ip || "";
-      transcriberPortInput.value           = s.transcriber_port || "9000";
-      transcriberModelSel.value            = s.transcriber_model || "medium";
-      transcriberFallbackIpInput.value     = s.transcriber_fallback_ip || "";
-      transcriberFallbackPortInput.value   = s.transcriber_fallback_port || "9000";
-      transcriberFallbackModelSel.value    = s.transcriber_fallback_model || "medium";
-      alwaysOnTopToggle.checked            = s.always_on_top !== false;
-      useHostedWhisperToggle.checked       = s.use_hosted_whisper !== false;
-      useLocalFallbackToggle.checked       = s.use_local_fallback !== false;
-      languageSelect.value                 = s.transcription_language || "auto";
-    });
     settingsOverlay.style.display = "flex";
     settingsBtn.classList.add("open");
+    _whenApiReady(() => {
+      pywebview.api.get_settings().then((s) => {
+        localWhisperModelSel.value           = s.local_whisper_model || "small";
+        transcriberIpInput.value             = s.transcriber_ip || "";
+        transcriberPortInput.value           = s.transcriber_port || "9000";
+        transcriberModelSel.value            = s.transcriber_model || "medium";
+        transcriberFallbackIpInput.value     = s.transcriber_fallback_ip || "";
+        transcriberFallbackPortInput.value   = s.transcriber_fallback_port || "9000";
+        transcriberFallbackModelSel.value    = s.transcriber_fallback_model || "medium";
+        alwaysOnTopToggle.checked            = s.always_on_top !== false;
+        useHostedWhisperToggle.checked       = s.use_hosted_whisper !== false;
+        useLocalFallbackToggle.checked       = s.use_local_fallback !== false;
+        languageSelect.value                 = s.transcription_language || "auto";
+        historyWindowSelect.value            = s.history_window || "all";
+      }).catch((e) => {
+        showSystem((e && e.message) || "Could not load settings.");
+      });
+    });
   } else {
     settingsOverlay.style.display = "none";
     settingsBtn.classList.remove("open");
@@ -1109,21 +1390,27 @@ settingsSave.addEventListener("click", async () => {
     return;
   }
   try {
+    if (!_apiReady() || !pywebview.api.save_settings) {
+      showSystem("WhisperNote is still starting up. Try again in a moment.");
+      return;
+    }
     await pywebview.api.save_settings({
-    local_whisper_model:      localWhisperModelSel.value,
-    transcriber_ip:           transcriberIpInput.value,
-    transcriber_port:         transcriberPortInput.value,
-    transcriber_model:        transcriberModelSel.value,
-    transcriber_fallback_ip:  transcriberFallbackIpInput.value,
-    transcriber_fallback_port: transcriberFallbackPortInput.value,
-    transcriber_fallback_model: transcriberFallbackModelSel.value,
-    always_on_top:            alwaysOnTopToggle.checked,
-    use_hosted_whisper:       useHostedWhisperToggle.checked,
-    use_local_fallback:       useLocalFallbackToggle.checked,
-    transcription_language:   languageSelect.value,
+      local_whisper_model:       localWhisperModelSel.value,
+      transcriber_ip:            transcriberIpInput.value,
+      transcriber_port:          transcriberPortInput.value,
+      transcriber_model:         transcriberModelSel.value,
+      transcriber_fallback_ip:   transcriberFallbackIpInput.value,
+      transcriber_fallback_port: transcriberFallbackPortInput.value,
+      transcriber_fallback_model: transcriberFallbackModelSel.value,
+      always_on_top:             alwaysOnTopToggle.checked,
+      use_hosted_whisper:        useHostedWhisperToggle.checked,
+      use_local_fallback:        useLocalFallbackToggle.checked,
+      transcription_language:    languageSelect.value,
+      history_window:            historyWindowSelect.value,
     });
     settingsOverlay.style.display = "none";
     settingsBtn.classList.remove("open");
+    _refreshHistoryLoad();
   } catch (e) {
     showSystem((e && e.message) || "Enable hosted or local transcription.");
   }

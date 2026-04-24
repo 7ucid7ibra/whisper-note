@@ -41,6 +41,84 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
+body.favorites-view {
+  --favorites-card-height: clamp(240px, 34vh, 320px);
+  background:
+    radial-gradient(circle at 16% 14%, rgba(98, 212, 255, 0.08), transparent 28%),
+    radial-gradient(circle at 84% 82%, rgba(164, 109, 255, 0.10), transparent 28%),
+    linear-gradient(180deg, rgba(8, 11, 18, 0.98), rgba(10, 13, 22, 0.98));
+}
+
+body.favorites-view .top-controls,
+body.favorites-view .bottom-bar,
+body.favorites-view .settings-overlay,
+body.favorites-view .help-card,
+body.favorites-view .nodes-overlay {
+  display: none !important;
+}
+
+body.favorites-view .shell {
+  width: calc(100% - 24px);
+  height: calc(100% - 24px);
+  margin: 12px;
+  border-radius: 20px;
+}
+
+body.favorites-view .close-btn {
+  display: flex;
+}
+
+body.favorites-view .chat-wrap {
+  padding: 34px 14px 14px;
+}
+
+body.favorites-view .messages {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-auto-rows: var(--favorites-card-height);
+  gap: 14px;
+  align-content: start;
+  padding: 16px 16px 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+body.favorites-view .history-empty {
+  grid-column: 1 / -1;
+}
+
+body.favorites-view .favorites-grid-item {
+  width: 100%;
+  height: var(--favorites-card-height);
+  overflow: hidden;
+}
+
+body.favorites-view .favorites-grid-item .voice-wrap {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  align-self: stretch;
+}
+
+body.favorites-view .favorites-grid-item .msg.voice {
+  width: 100%;
+  max-width: none;
+  align-self: stretch;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+body.favorites-view .msg.voice .msg-actions {
+  display: none;
+}
+
+body.favorites-view .msg.voice .favorite-btn {
+  right: 10px;
+  bottom: 10px;
+}
+
 /* ── Ambient orbs ─────────────────────────────────────────────────────────── */
 .orb {
   position: fixed;
@@ -159,7 +237,7 @@ html, body {
 .close-btn {
   position: absolute;
   top: 11px; left: 14px;
-  width: 13px; height: 13px;
+  width: 18px; height: 18px;
   background: rgba(255, 85, 75, 0.75);
   border: none;
   border-radius: 50%;
@@ -167,6 +245,10 @@ html, body {
   z-index: 20;
   font-size: 0;
   color: transparent;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
   -webkit-app-region: no-drag;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.30);
@@ -216,10 +298,11 @@ html, body {
 }
 
 .help-card {
-  position: absolute;
-  top: 30px;
-  right: 38px;
-  width: 245px;
+  position: fixed;
+  top: 38px;
+  right: 14px;
+  width: min(245px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
   border-radius: 11px;
   background: rgba(10, 8, 22, 0.90);
   border: 1px solid rgba(167, 139, 250, 0.22);
@@ -232,6 +315,7 @@ html, body {
   transform: translateY(-4px);
   pointer-events: none;
   visibility: hidden;
+  z-index: 40;
   transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s;
 }
 .help-card.open {
@@ -352,6 +436,16 @@ html, body {
   border-radius: 999px;
 }
 .messages::-webkit-scrollbar-thumb:hover { background: rgba(167, 139, 250, 0.42); }
+
+.history-empty {
+  width: 100%;
+  padding: 22px 18px 8px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  opacity: 0.92;
+}
 
 /* ── Message bubbles ──────────────────────────────────────────────────────── */
 .msg {
@@ -675,14 +769,18 @@ html, body {
   position: absolute;
   top: 14px;
   left: 14px;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   border: none;
   border-radius: 50%;
   background: rgba(255, 85, 75, 0.78);
   color: transparent;
   cursor: pointer;
   z-index: 3;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.28);
   transition: transform 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
 }
@@ -752,16 +850,30 @@ html, body {
   line-height: 1.6;
   text-align: center;
 }
-.nodes-grid-item {
+.nodes-grid-item,
+.favorites-grid-item {
   width: 100%;
+  height: 100%;
   animation: nodesCardIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
   animation-delay: var(--enter-delay, 0ms);
+}
+.nodes-grid-item .voice-wrap,
+.favorites-grid-item .voice-wrap {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  align-self: stretch;
+}
+.nodes-grid-item .msg.voice,
+.favorites-grid-item .msg.voice {
+  min-height: 0;
 }
 @keyframes nodesCardIn {
   from { opacity: 0; transform: translateY(14px) scale(0.96); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
-.nodes-grid-item .msg.voice {
+.nodes-grid-item .msg.voice,
+.favorites-grid-item .msg.voice {
   width: 100%;
   max-width: none;
   align-self: stretch;
@@ -775,7 +887,18 @@ html, body {
     0 8px 22px rgba(0,0,0,0.22),
     0 0 0 1px rgba(0,0,0,0.18);
 }
+body.favorites-view .favorites-grid-item .voice-text,
+body.favorites-view .nodes-focus-wrap .voice-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
 .nodes-grid-item .msg.voice::before,
+.favorites-grid-item .msg.voice::before,
 .nodes-focus-wrap .msg.voice::before {
   content: "";
   position: absolute;
@@ -810,6 +933,8 @@ html, body {
   display: block;
   z-index: 6;
   pointer-events: auto;
+  height: var(--favorites-card-height);
+  width: min(640px, calc(100vw - 66px));
   box-shadow: 0 0 0 1px rgba(0,0,0,0.16);
   transition:
     left 0.32s cubic-bezier(0.22, 1, 0.36, 1),
@@ -830,6 +955,10 @@ html, body {
   width: 100%;
   max-width: none;
   min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   cursor: text;
   background:
     linear-gradient(145deg, rgba(15, 19, 28, 0.98), rgba(22, 28, 40, 0.98));
@@ -858,6 +987,14 @@ html, body {
   padding: 0;
   overflow: hidden;
   min-height: 1.55em;
+}
+body.favorites-view .favorites-grid-item .msg.voice.editing .msg-edit-textarea,
+body.favorites-view .nodes-focus-wrap .msg.voice.editing .msg-edit-textarea {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 .msg-edit-btns {
   display: flex;
