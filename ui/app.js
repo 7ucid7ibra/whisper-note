@@ -26,6 +26,10 @@ let _favoritesPageLoadToken = 0;
 
 /* ── DOM refs ─────────────────────────────────────────────────────────────── */
 const messages                   = document.getElementById("messages");
+const shell                      = document.getElementById("shell");
+const topControls                = document.querySelector(".top-controls");
+const chatWrap                   = document.getElementById("chatWrap");
+const bottomBar                  = document.querySelector(".bottom-bar");
 const micBtn                     = document.getElementById("micBtn");
 const micWrap                    = document.getElementById("micWrap");
 const closeBtn                   = document.getElementById("closeBtn");
@@ -34,6 +38,7 @@ const helpCard                   = document.getElementById("helpCard");
 const settingsBtn                = document.getElementById("settingsBtn");
 const nodesBtn                   = document.getElementById("nodesBtn");
 const settingsOverlay            = document.getElementById("settingsOverlay");
+const settingsPanel              = settingsOverlay ? settingsOverlay.querySelector(".settings-panel") : null;
 const settingsClose              = document.getElementById("settingsClose");
 const settingsSave               = document.getElementById("settingsSave");
 const localWhisperModelSel       = document.getElementById("localWhisperModelSelect");
@@ -61,6 +66,122 @@ const IS_FAVORITES_VIEW = document.body.classList.contains("favorites-view") || 
 if (IS_FAVORITES_VIEW) {
   document.body.classList.add("favorites-view");
 }
+
+const _borderGlowTargets = new Set();
+let _borderGlowActiveTargets = new Set();
+
+function _ensureBorderGlowLayer(el) {
+  if (!el) return;
+  const first = el.firstElementChild;
+  if (first && first.classList && first.classList.contains("border-glow-layer")) return;
+  const layer = document.createElement("span");
+  layer.className = "border-glow-layer";
+  layer.setAttribute("aria-hidden", "true");
+  el.prepend(layer);
+}
+
+function _registerBorderGlowTarget(el, edgeSensitivity = 30) {
+  if (!el || _borderGlowTargets.has(el)) return;
+  el.classList.add("edge-glow-target");
+  el.dataset.edgeSensitivity = String(edgeSensitivity);
+  el.style.setProperty("--glow-edge", "0");
+  el.style.setProperty("--glow-angle", "0deg");
+  el.style.setProperty("--glow-x", "50%");
+  el.style.setProperty("--glow-y", "50%");
+  el.style.setProperty("--glow-spread", `${Math.max(14, Math.round(edgeSensitivity * 0.7))}px`);
+  _ensureBorderGlowLayer(el);
+  _borderGlowTargets.add(el);
+}
+
+function _unregisterBorderGlowTarget(el) {
+  if (!el || !_borderGlowTargets.has(el)) return;
+  _borderGlowTargets.delete(el);
+  _borderGlowActiveTargets.delete(el);
+  const layer = el.firstElementChild && el.firstElementChild.classList && el.firstElementChild.classList.contains("border-glow-layer")
+    ? el.firstElementChild
+    : null;
+  if (layer) layer.remove();
+  el.classList.remove("edge-glow-target");
+  el.style.removeProperty("--glow-edge");
+  el.style.removeProperty("--glow-angle");
+  el.style.removeProperty("--glow-x");
+  el.style.removeProperty("--glow-y");
+  el.style.removeProperty("--glow-spread");
+}
+
+function _unregisterBorderGlowTargetsWithin(root) {
+  if (!root || typeof root.querySelectorAll !== "function") return;
+  root.querySelectorAll(".edge-glow-target").forEach((el) => _unregisterBorderGlowTarget(el));
+}
+
+function _clearBorderGlowTarget(el) {
+  if (!el) return;
+  el.style.setProperty("--glow-edge", "0");
+}
+
+function _updateBorderGlowTarget(el, clientX, clientY) {
+  if (!el || typeof el.getBoundingClientRect !== "function") return;
+  const rect = el.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+
+  const x = Math.min(Math.max(clientX - rect.left, 0), rect.width);
+  const y = Math.min(Math.max(clientY - rect.top, 0), rect.height);
+  const dist = Math.min(x, y, rect.width - x, rect.height - y);
+  const sensitivity = Number(el.dataset.edgeSensitivity || 30);
+  const edge = Math.max(0, Math.min(1, 1 - (dist / Math.max(1, sensitivity))));
+
+  if (edge <= 0) {
+    _clearBorderGlowTarget(el);
+    return;
+  }
+
+  const cx = rect.width / 2;
+  const cy = rect.height / 2;
+  const angle = Math.atan2(y - cy, x - cx) * (180 / Math.PI) + 90;
+
+  el.style.setProperty("--glow-edge", edge.toFixed(3));
+  el.style.setProperty("--glow-angle", `${angle.toFixed(3)}deg`);
+  el.style.setProperty("--glow-x", `${((x / rect.width) * 100).toFixed(3)}%`);
+  el.style.setProperty("--glow-y", `${((y / rect.height) * 100).toFixed(3)}%`);
+}
+
+function _refreshBorderGlowTargets(e) {
+  const next = new Set();
+  const target = e.target && typeof e.target.closest === "function"
+    ? e.target.closest(".edge-glow-target")
+    : null;
+  if (target) next.add(target);
+
+  for (const prev of _borderGlowActiveTargets) {
+    if (!next.has(prev)) _clearBorderGlowTarget(prev);
+  }
+  for (const target of next) {
+    _updateBorderGlowTarget(target, e.clientX, e.clientY);
+  }
+  _borderGlowActiveTargets = next;
+}
+
+document.addEventListener("pointermove", _refreshBorderGlowTargets, { passive: true });
+document.addEventListener("pointerleave", () => {
+  for (const target of _borderGlowActiveTargets) _clearBorderGlowTarget(target);
+  _borderGlowActiveTargets = new Set();
+});
+
+[
+  [shell, 34],
+  [topControls, 18],
+  [chatWrap, 24],
+  [bottomBar, 22],
+  [settingsPanel, 24],
+  [nodesModal, 24],
+  [infoBtn, 18],
+  [nodesBtn, 20],
+  [settingsBtn, 18],
+  [closeBtn, 18],
+  [settingsClose, 16],
+  [nodesClose, 16],
+  [micBtn, 22],
+].forEach(([el, sensitivity]) => _registerBorderGlowTarget(el, sensitivity));
 
 /* ── Sounds (Web Audio API — no external files needed) ────────────────────── */
 function _beep(freq, duration, vol = 0.07, delay = 0) {
@@ -319,6 +440,7 @@ function _removeFavoritesPageItem(transcriptionId) {
   const id = String(transcriptionId);
   const item = _favoritesOverlayItemsById.get(id);
   if (!item) return;
+  _unregisterBorderGlowTarget(item.bubble);
   item.wrap.remove();
   _favoritesOverlayItemsById.delete(id);
   _syncFavoritesOverlayCount();
@@ -329,6 +451,7 @@ function _removeFavoritesPageItem(transcriptionId) {
 
 function _renderFavoritesPageEmpty(message = "No favorites yet. Turn on the LED on a note to pin it here.") {
   if (!messages) return;
+  _unregisterBorderGlowTargetsWithin(messages);
   _favoritesOverlayItemsById.clear();
   messages.innerHTML = "";
   _clearHistoryEmpty();
@@ -342,6 +465,7 @@ function _renderFavoritesPageEmpty(message = "No favorites yet. Turn on the LED 
 
 function _renderFavoritesPageRows(rows) {
   if (!messages) return;
+  _unregisterBorderGlowTargetsWithin(messages);
   _favoritesOverlayItemsById.clear();
   messages.innerHTML = "";
   _clearHistoryEmpty();
@@ -702,6 +826,9 @@ function _makeFavoriteButton(favorite = false) {
 }
 
 function _renderVoiceBubbleBody(bubble, text, favoriteBtn = null, favorite = false, transcriptionId = null) {
+  const glowLayer = bubble.firstElementChild && bubble.firstElementChild.classList && bubble.firstElementChild.classList.contains("border-glow-layer")
+    ? bubble.firstElementChild
+    : null;
   bubble.dataset.rawText = text;
   bubble.dataset.favorite = favorite ? "1" : "0";
   if (transcriptionId != null) {
@@ -710,6 +837,7 @@ function _renderVoiceBubbleBody(bubble, text, favoriteBtn = null, favorite = fal
   bubble.classList.toggle("favorited", !!favorite);
 
   bubble.innerHTML = "";
+  if (glowLayer) bubble.appendChild(glowLayer);
   const textEl = document.createElement("span");
   textEl.className = "voice-text";
   textEl.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
@@ -907,7 +1035,11 @@ function startEditBubble(bubble, wrap, options = {}) {  // eslint-disable-line n
   btnRow.appendChild(cancelBtn);
   btnRow.appendChild(saveBtn);
 
+  const glowLayer = bubble.firstElementChild && bubble.firstElementChild.classList && bubble.firstElementChild.classList.contains("border-glow-layer")
+    ? bubble.firstElementChild
+    : null;
   bubble.innerHTML = "";
+  if (glowLayer) bubble.appendChild(glowLayer);
   bubble.appendChild(ta);
   bubble.appendChild(btnRow);
 
@@ -1032,6 +1164,7 @@ function _syncFavoritesOverlayCount(total = null) {
 
 function _clearFavoritesOverlayFocus() {
   if (_favoritesOverlayFocusedWrap) {
+    _unregisterBorderGlowTargetsWithin(_favoritesOverlayFocusedWrap);
     _favoritesOverlayFocusedWrap.remove();
     _favoritesOverlayFocusedWrap = null;
   }
@@ -1054,6 +1187,7 @@ function _removeFavoritesOverlayItem(transcriptionId) {
   if (_favoritesOverlayFocusedId === id) {
     _clearFavoritesOverlayFocus();
   }
+  _unregisterBorderGlowTarget(item.bubble);
   item.wrap.remove();
   _favoritesOverlayItemsById.delete(id);
   if (_favoritesOverlayOpen) {
@@ -1066,6 +1200,7 @@ function _removeFavoritesOverlayItem(transcriptionId) {
 
 function _renderFavoritesOverlayEmpty(message = "No favorites yet. Turn on the LED on a note to pin it here.") {
   if (!nodesGrid) return;
+  _unregisterBorderGlowTargetsWithin(nodesGrid);
   nodesGrid.innerHTML = "";
   const empty = document.createElement("div");
   empty.className = "nodes-empty";
@@ -1076,6 +1211,7 @@ function _renderFavoritesOverlayEmpty(message = "No favorites yet. Turn on the L
 
 function _renderFavoritesOverlayRows(rows) {
   if (!nodesGrid) return;
+  _unregisterBorderGlowTargetsWithin(nodesGrid);
   _favoritesOverlayItemsById.clear();
   nodesGrid.innerHTML = "";
 
@@ -1285,6 +1421,7 @@ function _loadSavedTranscriptions({ preserveScroll = false, scrollTop = 0 } = {}
   if (typeof pywebview === "undefined" || !pywebview.api || !pywebview.api.get_transcription_history) return;
   _historyLoaded = true;
   pywebview.api.get_transcription_history().then((rows) => {
+    _unregisterBorderGlowTargetsWithin(messages);
     messages.innerHTML = "";
     _historyItemsById.clear();
     _clearHistoryEmpty();
