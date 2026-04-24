@@ -13,6 +13,7 @@ let   _levelHead = 0;
 let _transcribingEl    = null;
 let _transcribingCount = 0;
 let _historyEmptyEl    = null;
+let _historyItemsById  = new Map();
 
 let _favoritesOverlayOpen = false;
 let _favoritesOverlayFocusedWrap = null;
@@ -177,7 +178,7 @@ window.__onPythonEvent = (raw) => {
       if (IS_FAVORITES_VIEW) {
         _loadFavoritesPage();
       } else {
-        _refreshHistoryLoad({ preserveScroll: true });
+        _applyTranscriptionUpdate(data);
       }
       break;
 
@@ -273,9 +274,45 @@ function _refreshHistoryLoad({ preserveScroll = false } = {}) {
   if (IS_FAVORITES_VIEW) return;
   const scrollTop = preserveScroll ? messages.scrollTop : 0;
   _historyLoaded = false;
+  _historyItemsById.clear();
   messages.innerHTML = "";
   _clearHistoryEmpty();
   _scheduleHistoryLoad({ preserveScroll, scrollTop });
+}
+
+function _applyTranscriptionUpdate(record) {
+  const normalized = _normalizeTranscriptionRecord(record);
+  if (!normalized || normalized.id == null) return;
+
+  const id = String(normalized.id);
+
+  const historyItem = _historyItemsById.get(id);
+  if (historyItem) {
+    historyItem.record = normalized;
+    _renderVoiceBubbleBody(
+      historyItem.bubble,
+      normalized.text,
+      historyItem.favoriteBtn,
+      normalized.favorite,
+      normalized.id,
+    );
+  }
+
+  const favoritesItem = _favoritesOverlayItemsById.get(id);
+  if (favoritesItem) {
+    if (!normalized.favorite) {
+      _removeFavoritesPageItem(id);
+    } else {
+      favoritesItem.record = normalized;
+      _renderVoiceBubbleBody(
+        favoritesItem.bubble,
+        normalized.text,
+        favoritesItem.favoriteBtn,
+        normalized.favorite,
+        normalized.id,
+      );
+    }
+  }
 }
 
 function _removeFavoritesPageItem(transcriptionId) {
@@ -827,6 +864,9 @@ async function _toggleFavoriteBubble(bubble, favoriteBtn, options = {}) {
 function appendVoiceBubble(record, { scroll = true } = {}) {
   const item = _createVoiceBubble(record);
   if (!item) return null;
+  if (item.record && item.record.id != null) {
+    _historyItemsById.set(String(item.record.id), item);
+  }
   _clearHistoryEmpty();
   messages.appendChild(item.wrap);
   if (scroll) scrollBottom();
@@ -1246,6 +1286,7 @@ function _loadSavedTranscriptions({ preserveScroll = false, scrollTop = 0 } = {}
   _historyLoaded = true;
   pywebview.api.get_transcription_history().then((rows) => {
     messages.innerHTML = "";
+    _historyItemsById.clear();
     _clearHistoryEmpty();
     if (!Array.isArray(rows) || rows.length === 0) {
       _renderHistoryEmpty("No notes in this history window.");
@@ -1254,7 +1295,12 @@ function _loadSavedTranscriptions({ preserveScroll = false, scrollTop = 0 } = {}
     const frag = document.createDocumentFragment();
     for (const row of rows) {
       const item = _createVoiceBubble(row);
-      if (item) frag.appendChild(item.wrap);
+      if (item) {
+        if (item.record && item.record.id != null) {
+          _historyItemsById.set(String(item.record.id), item);
+        }
+        frag.appendChild(item.wrap);
+      }
     }
     messages.appendChild(frag);
     if (preserveScroll) {

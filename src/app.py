@@ -490,13 +490,13 @@ class WhisperNoteAPI:
         payload = json.dumps({"event": event, "data": data})
         self._favorites_window.evaluate_js(f"window.__onPythonEvent({json.dumps(payload)})")
 
-    def _notify_favorites_changed(self) -> None:
+    def _notify_favorites_changed(self, record=None) -> None:
         try:
-            self._emit_favorites("favorites_changed", None)
+            self._emit_favorites("favorites_changed", record)
         except Exception as e:
             log.debug("Failed to notify favorites window: %s", e)
         try:
-            self._emit("favorites_changed", None)
+            self._emit("favorites_changed", record)
         except Exception as e:
             log.debug("Failed to notify main window: %s", e)
 
@@ -901,8 +901,9 @@ class WhisperNoteAPI:
                     (1 if next_value else 0, transcription_id),
                 )
                 conn.commit()
-            self._notify_favorites_changed()
-            return _fetch_transcription_record(transcription_id)
+            record = _fetch_transcription_record(transcription_id)
+            self._notify_favorites_changed(record)
+            return record
         except Exception as e:
             log.warning("Failed to toggle favorite for %s: %s", transcription_id, e)
             return None
@@ -922,8 +923,9 @@ class WhisperNoteAPI:
                 if cur.rowcount == 0:
                     return None
                 conn.commit()
-            self._notify_favorites_changed()
-            return _fetch_transcription_record(transcription_id)
+            record = _fetch_transcription_record(transcription_id)
+            self._notify_favorites_changed(record)
+            return record
         except Exception as e:
             log.warning(
                 "Failed to update transcription text for %s: %s",
