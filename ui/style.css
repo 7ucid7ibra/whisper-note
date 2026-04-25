@@ -185,62 +185,33 @@ body.favorites-view .msg.voice .favorite-btn {
 }
 
 /* ── Border glow system ─────────────────────────────────────────────────── */
-.edge-glow-target {
-  position: relative;
+.shell {
   isolation: isolate;
 }
-.edge-glow-target > .border-glow-layer {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  z-index: 0;
-  opacity: var(--glow-edge, 0);
-  transition: opacity 0.12s linear;
-}
-.edge-glow-target > .border-glow-layer::before,
-.edge-glow-target > .border-glow-layer::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-}
-.edge-glow-target > .border-glow-layer::before {
-  inset: calc(var(--glow-spread, 18px) * -1);
-  background:
-    radial-gradient(circle at var(--glow-x, 50%) var(--glow-y, 50%),
-      rgba(98, 212, 255, 0.42) 0%,
-      rgba(98, 212, 255, 0.18) 18%,
-      rgba(164, 109, 255, 0.10) 34%,
-      transparent 68%);
-  filter: blur(12px) saturate(140%);
-  mix-blend-mode: screen;
-}
-.edge-glow-target > .border-glow-layer::after {
-  inset: 0;
-  padding: 1px;
-  background: linear-gradient(135deg,
-    rgba(98, 212, 255, 0.82),
-    rgba(255, 255, 255, 0.24),
-    rgba(164, 109, 255, 0.72));
-  opacity: calc(0.16 + (var(--glow-edge, 0) * 0.78));
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-          mask-composite: exclude;
-  box-shadow:
-    inset 0 0 0 1px rgba(255,255,255,0.06),
-    inset 0 0 14px rgba(98,212,255,0.08);
-}
-.edge-glow-target > :not(.border-glow-layer) {
+.shell > * {
   position: relative;
   z-index: 1;
 }
-.shell.edge-glow-target,
-.settings-panel.edge-glow-target,
-.nodes-modal.edge-glow-target {
-  overflow: visible;
+.shell.edge-glow-target::after {
+  content: "";
+  position: absolute;
+  inset: -16px;
+  border-radius: 26px;
+  pointer-events: none;
+  z-index: 0;
+  opacity: calc(var(--glow-edge, 0) * 0.95);
+  will-change: opacity, transform;
+  background:
+    radial-gradient(circle at var(--glow-x, 50%) var(--glow-y, 50%),
+      rgba(98, 212, 255, 0.34) 0%,
+      rgba(98, 212, 255, 0.16) 18%,
+      rgba(164, 109, 255, 0.14) 34%,
+      transparent 68%);
+  filter: blur(14px) saturate(135%);
+  mix-blend-mode: screen;
+}
+.shell.edge-glow-target::before {
+  z-index: 2;
 }
 
 /* ── Drag region ──────────────────────────────────────────────────────────── */
