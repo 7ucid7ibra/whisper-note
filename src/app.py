@@ -908,6 +908,36 @@ class WhisperNoteAPI:
             log.warning("Failed to toggle favorite for %s: %s", transcription_id, e)
             return None
 
+    def favorite_latest_transcription(self) -> dict | None:
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    """
+                    SELECT id, COALESCE(favorite, 0) AS favorite
+                    FROM transcriptions
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if row is None:
+                    self._emit("error", "No saved notes yet.")
+                    return None
+                transcription_id = int(row["id"])
+                if bool(row["favorite"]):
+                    return _fetch_transcription_record(transcription_id)
+                conn.execute(
+                    "UPDATE transcriptions SET favorite = 1 WHERE id = ?",
+                    (transcription_id,),
+                )
+                conn.commit()
+            record = _fetch_transcription_record(transcription_id)
+            self._notify_favorites_changed(record)
+            return record
+        except Exception as e:
+            log.warning("Failed to favorite latest transcription: %s", e)
+            return None
+
     def update_transcription_text(self, transcription_id: int, text: str) -> dict | None:
         try:
             transcription_id = int(transcription_id)
@@ -1336,7 +1366,7 @@ def _ensure_global_hotkey_permission(prompt: bool = True) -> bool:
 
 
 def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
-    """Register ⌃⌘A as a global hotkey.
+    """Register ⌃⌘A and ⌃⌘Y as global hotkeys.
 
     Called from window.events.loaded (a background thread).
     NSEvent monitor registration must happen on the Cocoa main thread, so we
@@ -1360,21 +1390,26 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
         _OPT = int(NSEventModifierFlagOption)
         _SHFT = int(NSEventModifierFlagShift)
         _A = 0  # kVK_ANSI_A
+        _Y = 16  # kVK_ANSI_Y
 
         def _on_key(event):
             try:
                 flags = int(event.modifierFlags())
+                key_code = int(event.keyCode())
                 if (
-                    event.keyCode() == _A
-                    and (flags & _CMD)
+                    (flags & _CMD)
                     and (flags & _CTRL)
                     and not (flags & _OPT)
                     and not (flags & _SHFT)
                 ):
-                    # Call Python recording directly — no JS or evaluate_js needed.
-                    # Spawn a thread so we don't block the Cocoa event queue.
-                    log.debug("Global hotkey detected: ⌃⌘A")
-                    threading.Thread(target=api.toggle_recording, daemon=True).start()
+                    if key_code == _A:
+                        # Call Python recording directly — no JS or evaluate_js needed.
+                        # Spawn a thread so we don't block the Cocoa event queue.
+                        log.debug("Global hotkey detected: ⌃⌘A")
+                        threading.Thread(target=api.toggle_recording, daemon=True).start()
+                    elif key_code == _Y:
+                        log.debug("Global hotkey detected: ⌃⌘Y")
+                        threading.Thread(target=api.favorite_latest_transcription, daemon=True).start()
             except Exception:
                 pass
 
@@ -1384,7 +1419,7 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
                 int(NSEventMaskKeyDown),
                 _on_key,
             )
-            log.info("Global hotkey ready: ⌃⌘A")
+            log.info("Global hotkeys ready: ⌃⌘A, ⌃⌘Y")
 
         permission_ok = _ensure_global_hotkey_permission(prompt=True)
         if not permission_ok and not _hotkey_perm_warned:
