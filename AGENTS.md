@@ -187,3 +187,103 @@ To pick up where we left off:
 5. Test the .app bundle works
 6. Commit and push
 7. Upload to release: `gh release upload v1.0.0 dist/WhisperNote-macOS.dmg --clobber`
+
+### 2026-04-26 - Session 2: Headphone Media Key Support (In Progress)
+
+#### Goal
+Add the ability to press play/pause on Bluetooth headphones (Jabra) to toggle recording, instead of using keyboard shortcuts.
+
+#### What Was Tried
+
+1. **NSSystemDefined Event Monitor** (`src/app.py:1494-1543`)
+   - Used `NSEvent.addGlobalMonitorForEventsMatchingMask` with `0x0400` (NSSystemDefined)
+   - **Result**: Monitor created but NO events received from Jabra headphones
+   - **Reason**: Bluetooth headphones send events differently
+
+2. **CGEvent Tap** (`src/app.py:1500-1570`)
+   - Used `Quartz.CGEventTapCreate` with HID event tap
+   - Tried different options: `kCGEventTapOptionListenOnly`, `kCGEventTapOptionDefault`
+   - Tried enabling tap with `.setEnabled_(True)`
+   - Tried adding to run loop with `CoreFoundation.CFRunLoopAddSource`
+   - **Result**: Tap created but NO events received
+   - **Status**: BLOCKED - Needs macOS permission (Input Monitoring or Accessibility)
+
+3. **pynput Keyboard Listener** (CURRENT)
+   - Added `pip install pynput` dependency
+   - Implemented in `src/app.py:1488-1540`
+   - Uses `pynput.keyboard.Listener`
+   - **Result**: Works for KEYBOARD keys but NOT headphone buttons
+   - **Reason**: headphones use AVRCP protocol, not HID keyboard events
+
+#### Key Finding: Bluetooth Headphones Use AVRCP
+
+- **AVRCP** (Audio/Video Remote Control Protocol) = media control, not keyboard
+- Keyboard sends HID → pynput catches it ✓
+- Headphone play/press sends AVRCP → captured by macOS system (Control Center)
+- Third-party apps only get events with **CGEvent tap + macOS permissions**
+
+#### What Works
+
+- `pynput` keyboard listener is implemented and running
+- Logs all keyboard events with `log.warning("DEBUG pynput: key.vk=%s key.char=%s", key_code, key_char)`
+- Falls through cleanly if `pynput` not installed
+
+#### Next Step for Full Headphone Support
+
+Option A - Grant Input Monitoring permission:
+1. System Settings → Privacy & Security → Input Monitoring
+2. Add Terminal (or your terminal app)
+3. Restart app
+4. CGEvent tap should then receive events
+
+Option B - Grant Accessibility permission:
+1. System Settings → Privacy & Security → Accessibility
+2. Add Terminal/Python
+3. CGEvent tap will work
+
+Option C - Reconfigure Jabra headphones:
+- Some Jabra apps allow remapping buttons to HID mode instead of AVRCP
+
+#### Code Location
+
+The media key listener is in `src/app.py:1488-1540`:
+```python
+def _setup_media_keys(api: WhisperNoteAPI) -> None:
+    """Register headphone media keys (play/pause) to toggle recording."""
+    global _media_key_listener
+    try:
+        from pynput import keyboard
+    except ImportError:
+        log.warning("pynput not available: %s", e)
+        return
+    
+    def _on_press(key):
+        key_code = key.vk if hasattr(key, "vk") else None
+        log.warning("DEBUG pynput: key.vk=%s key.char=%s", key_code, key_char)
+        if key_code in (0x19,):  # play/pause
+            threading.Thread(target=api.toggle_recording, daemon=True).start()
+```
+
+#### Files Modified
+
+- `src/app.py`: Added `_setup_media_keys()` and `_teardown_media_keys()`
+- `requirements.txt`: Removed (was adding osxmmkeys - didn't work)
+- `scripts/build_macos_release.sh`: Removed AVFoundation install (caused build failures with Python 3.14)
+- `run.sh`: Already working, no changes needed
+
+#### Running the App
+
+```bash
+# Development
+./run.sh
+
+# Or
+source .venv/bin/activate
+python -m src.app
+```
+
+The app logs:
+- `Headphone media keys (pynput) ready` - pynput is active
+- `DEBUG pynput: key.vk=X key.char=Y` - keyboard events logged
+
+Press headphone button - no log output (AVRCP not captured)

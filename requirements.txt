@@ -6,3 +6,4 @@ scipy
 httpx
 pywebview
 pyobjc-framework-AVFoundation
+pynput
