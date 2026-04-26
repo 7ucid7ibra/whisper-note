@@ -1396,18 +1396,23 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
             try:
                 flags = int(event.modifierFlags())
                 key_code = int(event.keyCode())
+                chars = ""
+                try:
+                    chars = (event.charactersIgnoringModifiers() or "").lower()
+                except Exception:
+                    chars = ""
                 if (
                     (flags & _CMD)
                     and (flags & _CTRL)
                     and not (flags & _OPT)
                     and not (flags & _SHFT)
                 ):
-                    if key_code == _A:
+                    if key_code == _A or chars == "a":
                         # Call Python recording directly — no JS or evaluate_js needed.
                         # Spawn a thread so we don't block the Cocoa event queue.
                         log.debug("Global hotkey detected: ⌃⌘A")
                         threading.Thread(target=api.toggle_recording, daemon=True).start()
-                    elif key_code == _Y:
+                    elif key_code == _Y or chars == "y":
                         log.debug("Global hotkey detected: ⌃⌘Y")
                         threading.Thread(target=api.favorite_latest_transcription, daemon=True).start()
             except Exception:
