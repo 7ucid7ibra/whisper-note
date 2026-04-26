@@ -1492,58 +1492,56 @@ def _teardown_global_hotkey() -> None:
 
 
 # ── Headphone media key listener ───────────────────────────────────────────────
-# Media keys (play/pause on Bluetooth headphones) use NSSystemDefined events.
-_media_key_monitor = None
+# Note: Bluetooth headphones (Jabra, AirPods, etc.) use AVRCP media control protocol,
+# not HID keyboard events. pynput captures keyboard but not headphone buttons.
+# Full support would require CGEvent tap with Accessibility permission.
+_media_key_listener = None
 
 
 def _setup_media_keys(api: WhisperNoteAPI) -> None:
     """Register headphone media keys (play/pause) to toggle recording."""
-    global _media_key_monitor
+    global _media_key_listener
     try:
-        from AppKit import NSEvent
-        from PyObjCTools import AppHelper
-    except ImportError:
-        log.warning("AppKit/PyObjC not available, headphone media keys unavailable")
+        from pynput import keyboard
+    except ImportError as e:
+        log.warning("pynput not available: %s", e)
         return
 
     NX_KEYTYPE_PLAY = 16  # Play/pause media key
 
-    def _on_media_key(event):
+    def _on_press(key):
         try:
-            data1 = event.data1()
-            key = (data1 >> 16) & 0xFFFF
-            if key == NX_KEYTYPE_PLAY:
-                log.debug("Media key play/pause detected")
+            key_code = key.vk if hasattr(key, "vk") else None
+            key_char = getattr(key, "char", None)
+            log.warning("DEBUG pynput: key.vk=%s key.char=%s", key_code, key_char)
+            if key_code in (0x19,):
                 threading.Thread(target=api.toggle_recording, daemon=True).start()
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("DEBUG: Exception in pynput: %s", e)
 
-    def _register():
-        global _media_key_monitor
-        _media_key_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-            0x0400,  # NSSystemDefined
-            _on_media_key,
-        )
-        log.info("Headphone media keys ready: play_pause -> toggle recording")
+    def _on_release(key):
+        pass
 
     try:
-        AppHelper.callAfter(_register)
+        _media_key_listener = keyboard.Listener(
+            on_press=_on_press, on_release=_on_release
+        )
+        _media_key_listener.start()
+        log.info("Headphone media keys (pynput) ready")
     except Exception as e:
         log.warning("Headphone media key setup failed: %s", e)
 
 
 def _teardown_media_keys() -> None:
-    global _media_key_monitor
-    if _media_key_monitor is None:
+    global _media_key_listener
+    if _media_key_listener is None:
         return
     try:
-        from AppKit import NSEvent
-
-        NSEvent.removeMonitor_(_media_key_monitor)
+        _media_key_listener.stop()
     except Exception as e:
         log.debug("Headphone media key teardown failed: %s", e)
     finally:
-        _media_key_monitor = None
+        _media_key_listener = None
 
 
 def _graceful_shutdown_or_force_exit(timeout_s: float = 1.5) -> None:
