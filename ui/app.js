@@ -718,6 +718,16 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
+  // ⌃⌘Y — toggle pre-favorite for next recording (when window is focused)
+  if (e.metaKey && e.ctrlKey && (e.key === "y" || e.key === "z") && !e.altKey && !e.shiftKey) {
+    if (inInput) return;
+    e.preventDefault();
+    if (pywebview.api.toggle_pre_favorite) {
+      pywebview.api.toggle_pre_favorite();
+    }
+    return;
+  }
+
   // Space — pause / resume
   if (e.key === " " && isRecording) {
     if (inInput) return;

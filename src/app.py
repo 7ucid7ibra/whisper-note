@@ -936,6 +936,17 @@ class WhisperNoteAPI:
             log.warning("Failed to toggle favorite for %s: %s", transcription_id, e)
             return None
 
+    def toggle_pre_favorite(self) -> dict:
+        """Toggle the pre-favorite flag. Next saved recording will be auto-favorited."""
+        global _pre_favorite_next
+        _pre_favorite_next = not _pre_favorite_next
+        log.info("Pre-favorite toggled: %s", _pre_favorite_next)
+        try:
+            self._emit("pre_favorite_toggled", {"enabled": _pre_favorite_next})
+        except Exception as e:
+            log.debug("Failed to emit pre_favorite_toggled: %s", e)
+        return {"enabled": _pre_favorite_next}
+
     def favorite_latest_transcription(self) -> dict | None:
         try:
             with sqlite3.connect(DB_PATH) as conn:
@@ -1443,9 +1454,6 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
                     chars = (event.charactersIgnoringModifiers() or "").lower()
                 except Exception:
                     chars = ""
-                log.warning(
-                    "DEBUG hotkey: flags=%d keycode=%d chars=%s", flags, key_code, chars
-                )
                 if (
                     (flags & _CMD)
                     and (flags & _CTRL)
@@ -1459,17 +1467,11 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
                         threading.Thread(
                             target=api.toggle_recording, daemon=True
                         ).start()
-                    elif key_code == _Y or chars == "y":
+                    elif key_code == _Y or chars == "y" or chars == "z":
+                        # German QWERTZ keyboards: physical Y key (keycode 16) reports 'z'
                         log.debug("Global hotkey detected: ⌃⌘Y")
-                        global _pre_favorite_next
-                        _pre_favorite_next = not _pre_favorite_next
                         threading.Thread(
-                            target=api._emit,
-                            args=(
-                                "pre_favorite_toggled",
-                                {"enabled": _pre_favorite_next},
-                            ),
-                            daemon=True,
+                            target=api.toggle_pre_favorite, daemon=True
                         ).start()
             except Exception:
                 pass
@@ -1518,60 +1520,20 @@ def _teardown_global_hotkey() -> None:
 # not HID keyboard events. pynput captures keyboard but not headphone buttons.
 # Full support would require CGEvent tap with Accessibility permission.
 _media_key_listener = None
-_pynput_ctrl = False
 
 
 def _setup_media_keys(api: WhisperNoteAPI) -> None:
-    """Register keyboard shortcuts via pynput (fallback for global hotkey)."""
-    global _media_key_listener, _pynput_ctrl
-    log.warning("DEBUG: Setting up pynput listener...")
+    """Optional pynput listener for headphone media keys.
+    Note: Bluetooth headphones use AVRCP, not HID — pynput won't catch them.
+    Kept as a stub for future expansion.
+    """
+    global _media_key_listener
     try:
-        from pynput import keyboard
-    except ImportError as e:
-        log.warning("pynput not available: %s", e)
+        from pynput import keyboard  # noqa: F401
+    except ImportError:
+        log.debug("pynput not available, skipping media key listener")
         return
-
-    _pynput_ctrl = False
-
-    def _on_press(key):
-        global _pynput_ctrl
-        try:
-            key_code = key.vk if hasattr(key, "vk") else -1
-            key_char = getattr(key, "char", None)
-            if key_code in (0x1D, 0x36, 0x37):
-                _pynput_ctrl = True
-            log.warning(
-                "DEBUG pynput press: vk=0x%x '%s' ctrl=%s",
-                key_code,
-                key_char,
-                _pynput_ctrl,
-            )
-            if _pynput_ctrl and key_code == 25:
-                log.warning("DEBUG: Ctrl+Y detected!")
-                global _pre_favorite_next
-                _pre_favorite_next = not _pre_favorite_next
-                threading.Thread(
-                    target=api._emit,
-                    args=("pre_favorite_toggled", {"enabled": _pre_favorite_next}),
-                    daemon=True,
-                ).start()
-        except Exception as e:
-            log.warning("DEBUG: Exception in pynput: %s", e)
-
-    def _on_release(key):
-        global _pynput_ctrl
-        key_code = key.vk if hasattr(key, "vk") else -1
-        if key_code in (0x1D, 0x36, 0x37):
-            _pynput_ctrl = False
-
-    try:
-        _media_key_listener = keyboard.Listener(
-            on_press=_on_press, on_release=_on_release
-        )
-        _media_key_listener.start()
-        log.info("Headphone media keys (pynput) ready")
-    except Exception as e:
-        log.warning("Headphone media key setup failed: %s", e)
+    log.debug("Media key listener stub (pynput available, headphone AVRCP unsupported)")
 
 
 def _teardown_media_keys() -> None:
