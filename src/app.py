@@ -1443,6 +1443,9 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
                     chars = (event.charactersIgnoringModifiers() or "").lower()
                 except Exception:
                     chars = ""
+                log.warning(
+                    "DEBUG hotkey: flags=%d keycode=%d chars=%s", flags, key_code, chars
+                )
                 if (
                     (flags & _CMD)
                     and (flags & _CTRL)
@@ -1518,28 +1521,72 @@ _media_key_listener = None
 
 
 def _setup_media_keys(api: WhisperNoteAPI) -> None:
-    """Register headphone media keys (play/pause) to toggle recording."""
+    """Register headphone media keys (play/pause) & Ctrl+Cmd+Y pre-favorite to toggle recording."""
     global _media_key_listener
+    log.warning("DEBUG: Setting up pynput listener...")
     try:
         from pynput import keyboard
     except ImportError as e:
         log.warning("pynput not available: %s", e)
         return
 
-    NX_KEYTYPE_PLAY = 16  # Play/pause media key
+    _ctrl_pressed = False
+    _cmd_pressed = False
 
     def _on_press(key):
+        nonlocal _ctrl_pressed, _cmd_pressed
         try:
-            key_code = key.vk if hasattr(key, "vk") else None
+            key_code = key.vk if hasattr(key, "vk") else -1
             key_char = getattr(key, "char", None)
-            log.warning("DEBUG pynput: key.vk=%s key.char=%s", key_code, key_char)
-            if key_code in (0x19,):
+
+            # Track modifier keys
+            if key_code == 0x1D:  # Left control
+                _ctrl_pressed = True
+            elif key_code == 0x37:  # Left command
+                _cmd_pressed = True
+            elif key_code == 0x36:  # Right command
+                _cmd_pressed = True
+
+            log.warning(
+                "DEBUG pynput press: vk=0x%x '%s' ctrl=%s cmd=%s",
+                key_code,
+                key_char,
+                _ctrl_pressed,
+                _cmd_pressed,
+            )
+
+            # Handle Ctrl+Cmd+Y (keycode 0x19 = 25 decimal)
+            if _ctrl_pressed and _cmd_pressed:
+                log.warning(
+                    "DEBUG: Ctrl+Cmd detected, Y key needed. key_code=%d (0x%x)",
+                    key_code,
+                    key_code,
+                )
+                if key_code == 25:  # 0x19 = 25 decimal = 'Y'
+                    log.warning("DEBUG: Hit Y key!")
+                    global _pre_favorite_next
+                    _pre_favorite_next = not _pre_favorite_next
+                    threading.Thread(
+                        target=api._emit,
+                        args=("pre_favorite_toggled", {"enabled": _pre_favorite_next}),
+                        daemon=True,
+                    ).start()
+
+            # Handle headphone media key (play/pause)
+            if key_code == 25:  # Also check 25 just in case
                 threading.Thread(target=api.toggle_recording, daemon=True).start()
+
         except Exception as e:
             log.warning("DEBUG: Exception in pynput: %s", e)
 
     def _on_release(key):
-        pass
+        nonlocal _ctrl_pressed, _cmd_pressed
+        key_code = key.vk if hasattr(key, "vk") else -1
+        if key_code == 0x1D:
+            _ctrl_pressed = False
+        elif key_code == 0x37 or key_code == 0x36:
+            _cmd_pressed = False
+        log.warning("DEBUG pynput release: vk=0x%x", key_code)
 
     try:
         _media_key_listener = keyboard.Listener(

@@ -193,6 +193,24 @@ To pick up where we left off:
 #### Goal
 Add the ability to press play/pause on Bluetooth headphones (Jabra) to toggle recording, instead of using keyboard shortcuts.
 
+#### Pre-Favorite Feature (NEW!)
+
+Press `⌃⌘Y` (Ctrl+Cmd+Y) **before** recording to mark the NEXT note as favorite:
+
+- Press once: Next recording will be auto-favorited (mic button shows 🔖)
+- Press again: Cancels the pre-favorite mode
+- Works without pressing headphone button
+
+**How it works**:
+1. `_pre_favorite_next` flag set when hotkey pressed
+2. Event emitted to JS: `pre_favorite_toggled` → mic button shows bookmark icon
+3. On save, if flag is set → auto-favorite the transcription, then reset flag
+
+**Files changed**:
+- `src/app.py`: Added `_pre_favorite_next` flag, modified hotkey handler, modified `_save_transcription()`
+- `ui/app.js`: Added `pre_favorite_toggled` event handler
+- `ui/style.css`: Added `.mic-btn.pre-favorite` style with 🔖 icon and bounce animation
+
 #### What Was Tried
 
 1. **NSSystemDefined Event Monitor** (`src/app.py:1494-1543`)
