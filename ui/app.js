@@ -178,10 +178,7 @@ window.__onPythonEvent = (raw) => {
   const { event, data } = JSON.parse(raw);
   switch (event) {
 
-    case "pre_favorite_toggled":
-      micBtn.classList.toggle("pre-favorite", !!data.enabled);
-      showSystem(data.enabled ? "🔖 Next note will be favorited" : "Auto-favorite cancelled");
-      break;
+    
 
     case "recording_started":
       isRecording = true;
@@ -718,12 +715,12 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  // ⌃⌘Y — toggle pre-favorite for next recording (when window is focused)
+  // ⌃⌘Y (or ⌃⌘Z on German keyboard) — stop recording and mark as favorite
   if (e.metaKey && e.ctrlKey && (e.key === "y" || e.key === "z") && !e.altKey && !e.shiftKey) {
     if (inInput) return;
     e.preventDefault();
-    if (pywebview.api.toggle_pre_favorite) {
-      pywebview.api.toggle_pre_favorite();
+    if (pywebview.api.stop_and_favorite) {
+      pywebview.api.stop_and_favorite();
     }
     return;
   }

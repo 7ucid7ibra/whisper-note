@@ -87,8 +87,9 @@ _rec_paused = False
 _rec_frames: list = []  # list of numpy int16 arrays
 _rec_stream = None  # sounddevice.InputStream
 
-# Pre-favorite flag: when set, next recording will be auto-favorited
-_pre_favorite_next = False
+# When True, the in-progress recording will be saved as a favorite once
+# transcription completes. Set by ⌃⌘Y stop, cleared after each save.
+_favorite_current_recording = False
 
 # ── Whisper cache ─────────────────────────────────────────────────────────────
 _whisper_cache: dict = {}
@@ -567,6 +568,16 @@ class WhisperNoteAPI:
             else:
                 self._do_start()
 
+    def stop_and_favorite(self) -> None:
+        """If recording, stop and mark this specific transcription as favorite.
+        If not recording, do nothing (Ctrl+Cmd+A is for starting)."""
+        global _favorite_current_recording
+        with _rec_lock:
+            if not _rec_active:
+                return
+            _favorite_current_recording = True
+            self._do_stop(discard=False)
+
     def pause_recording(self) -> None:
         """Toggle pause/resume while recording."""
         global _rec_paused
@@ -859,12 +870,10 @@ class WhisperNoteAPI:
             return None
         created_at = datetime.now(timezone.utc).isoformat()
 
-        # Check pre-favorite flag
-        should_favorite = False
-        global _pre_favorite_next
-        if _pre_favorite_next:
-            should_favorite = True
-            _pre_favorite_next = False  # Reset flag
+        # Consume the per-recording favorite flag set by stop_and_favorite (⌃⌘Y).
+        global _favorite_current_recording
+        should_favorite = _favorite_current_recording
+        _favorite_current_recording = False
 
         try:
             with sqlite3.connect(DB_PATH) as conn:
@@ -935,17 +944,6 @@ class WhisperNoteAPI:
         except Exception as e:
             log.warning("Failed to toggle favorite for %s: %s", transcription_id, e)
             return None
-
-    def toggle_pre_favorite(self) -> dict:
-        """Toggle the pre-favorite flag. Next saved recording will be auto-favorited."""
-        global _pre_favorite_next
-        _pre_favorite_next = not _pre_favorite_next
-        log.info("Pre-favorite toggled: %s", _pre_favorite_next)
-        try:
-            self._emit("pre_favorite_toggled", {"enabled": _pre_favorite_next})
-        except Exception as e:
-            log.debug("Failed to emit pre_favorite_toggled: %s", e)
-        return {"enabled": _pre_favorite_next}
 
     def favorite_latest_transcription(self) -> dict | None:
         try:
@@ -1471,7 +1469,7 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
                         # German QWERTZ keyboards: physical Y key (keycode 16) reports 'z'
                         log.debug("Global hotkey detected: ⌃⌘Y")
                         threading.Thread(
-                            target=api.toggle_pre_favorite, daemon=True
+                            target=api.stop_and_favorite, daemon=True
                         ).start()
             except Exception:
                 pass
