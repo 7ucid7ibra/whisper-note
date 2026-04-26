@@ -45,9 +45,7 @@ if [[ -z "$PYTHON" || ! -x "$PYTHON" ]]; then
 fi
 
 echo "Using Python: $PYTHON"
-"$PYTHON" -m pip install --upgrade pip >/dev/null
-"$PYTHON" -m pip install --upgrade -r requirements.txt pyinstaller >/dev/null
-"$PYTHON" -m pip install --upgrade pyobjc-framework-AVFoundation >/dev/null
+# Skip pip install - use existing venv packages
 
 rm -rf "$BUILD_ROOT" "$DIST_DIR"
 mkdir -p "$PYI_BUILD" "$PYI_SPEC" "$DIST_DIR" "$STAGING_DIR"

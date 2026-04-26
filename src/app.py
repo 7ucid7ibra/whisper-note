@@ -321,9 +321,13 @@ def _init_transcription_db() -> None:
         if "model" not in existing_columns:
             conn.execute("ALTER TABLE transcriptions ADD COLUMN model TEXT")
         if "is_local" not in existing_columns:
-            conn.execute("ALTER TABLE transcriptions ADD COLUMN is_local INTEGER DEFAULT 0")
+            conn.execute(
+                "ALTER TABLE transcriptions ADD COLUMN is_local INTEGER DEFAULT 0"
+            )
         if "favorite" not in existing_columns:
-            conn.execute("ALTER TABLE transcriptions ADD COLUMN favorite INTEGER DEFAULT 0")
+            conn.execute(
+                "ALTER TABLE transcriptions ADD COLUMN favorite INTEGER DEFAULT 0"
+            )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_transcriptions_favorite ON transcriptions(favorite)"
         )
@@ -488,7 +492,9 @@ class WhisperNoteAPI:
         if not self._favorites_window:
             return
         payload = json.dumps({"event": event, "data": data})
-        self._favorites_window.evaluate_js(f"window.__onPythonEvent({json.dumps(payload)})")
+        self._favorites_window.evaluate_js(
+            f"window.__onPythonEvent({json.dumps(payload)})"
+        )
 
     def _notify_favorites_changed(self, record=None) -> None:
         try:
@@ -751,15 +757,21 @@ class WhisperNoteAPI:
             wav_bytes
         )
         if text:
-            record = self._save_transcription(text, source, duration_ms, model, is_local)
-            self._emit("transcription_result", record or {
-                "text": text,
-                "source": source or "unknown",
-                "duration_ms": duration_ms,
-                "model": model,
-                "is_local": is_local,
-                "favorite": False,
-            })
+            record = self._save_transcription(
+                text, source, duration_ms, model, is_local
+            )
+            self._emit(
+                "transcription_result",
+                record
+                or {
+                    "text": text,
+                    "source": source or "unknown",
+                    "duration_ms": duration_ms,
+                    "model": model,
+                    "is_local": is_local,
+                    "favorite": False,
+                },
+            )
         else:
             self._emit("transcription_error", "nothing heard")
 
@@ -875,9 +887,13 @@ class WhisperNoteAPI:
         )
 
     def get_favorite_transcriptions(self, limit: int = 1000) -> list[dict]:
-        return _fetch_transcription_history(limit, favorites_only=True, newest_first=True)
+        return _fetch_transcription_history(
+            limit, favorites_only=True, newest_first=True
+        )
 
-    def toggle_transcription_favorite(self, transcription_id: int, favorite=None) -> dict | None:
+    def toggle_transcription_favorite(
+        self, transcription_id: int, favorite=None
+    ) -> dict | None:
         try:
             transcription_id = int(transcription_id)
         except Exception:
@@ -938,7 +954,9 @@ class WhisperNoteAPI:
             log.warning("Failed to favorite latest transcription: %s", e)
             return None
 
-    def update_transcription_text(self, transcription_id: int, text: str) -> dict | None:
+    def update_transcription_text(
+        self, transcription_id: int, text: str
+    ) -> dict | None:
         try:
             transcription_id = int(transcription_id)
         except Exception:
@@ -1019,15 +1037,21 @@ class WhisperNoteAPI:
                 wav_bytes
             )
             if text:
-                record = self._save_transcription(text, source, duration_ms, model, is_local)
-                self._emit("transcription_result", record or {
-                    "text": text,
-                    "source": source or "unknown",
-                    "duration_ms": duration_ms,
-                    "model": model,
-                    "is_local": is_local,
-                    "favorite": False,
-                })
+                record = self._save_transcription(
+                    text, source, duration_ms, model, is_local
+                )
+                self._emit(
+                    "transcription_result",
+                    record
+                    or {
+                        "text": text,
+                        "source": source or "unknown",
+                        "duration_ms": duration_ms,
+                        "model": model,
+                        "is_local": is_local,
+                        "favorite": False,
+                    },
+                )
             else:
                 self._emit("transcription_error", "no text recognized")
         except Exception as e:
@@ -1098,15 +1122,21 @@ class WhisperNoteAPI:
                 wav_bytes
             )
             if text:
-                record = self._save_transcription(text, source, duration_ms, model, is_local)
-                self._emit("transcription_result", record or {
-                    "text": text,
-                    "source": source or "unknown",
-                    "duration_ms": duration_ms,
-                    "model": model,
-                    "is_local": is_local,
-                    "favorite": False,
-                })
+                record = self._save_transcription(
+                    text, source, duration_ms, model, is_local
+                )
+                self._emit(
+                    "transcription_result",
+                    record
+                    or {
+                        "text": text,
+                        "source": source or "unknown",
+                        "duration_ms": duration_ms,
+                        "model": model,
+                        "is_local": is_local,
+                        "favorite": False,
+                    },
+                )
             else:
                 self._emit("transcription_error", "no text recognized")
         except Exception as e:
@@ -1411,10 +1441,14 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
                         # Call Python recording directly — no JS or evaluate_js needed.
                         # Spawn a thread so we don't block the Cocoa event queue.
                         log.debug("Global hotkey detected: ⌃⌘A")
-                        threading.Thread(target=api.toggle_recording, daemon=True).start()
+                        threading.Thread(
+                            target=api.toggle_recording, daemon=True
+                        ).start()
                     elif key_code == _Y or chars == "y":
                         log.debug("Global hotkey detected: ⌃⌘Y")
-                        threading.Thread(target=api.favorite_latest_transcription, daemon=True).start()
+                        threading.Thread(
+                            target=api.favorite_latest_transcription, daemon=True
+                        ).start()
             except Exception:
                 pass
 
@@ -1457,9 +1491,65 @@ def _teardown_global_hotkey() -> None:
         _hotkey_monitor = None
 
 
+# ── Headphone media key listener ───────────────────────────────────────────────
+# Media keys (play/pause on Bluetooth headphones) use NSSystemDefined events.
+_media_key_monitor = None
+
+
+def _setup_media_keys(api: WhisperNoteAPI) -> None:
+    """Register headphone media keys (play/pause) to toggle recording."""
+    global _media_key_monitor
+    try:
+        from AppKit import NSEvent
+        from PyObjCTools import AppHelper
+    except ImportError:
+        log.warning("AppKit/PyObjC not available, headphone media keys unavailable")
+        return
+
+    NX_KEYTYPE_PLAY = 16  # Play/pause media key
+
+    def _on_media_key(event):
+        try:
+            data1 = event.data1()
+            key = (data1 >> 16) & 0xFFFF
+            if key == NX_KEYTYPE_PLAY:
+                log.debug("Media key play/pause detected")
+                threading.Thread(target=api.toggle_recording, daemon=True).start()
+        except Exception:
+            pass
+
+    def _register():
+        global _media_key_monitor
+        _media_key_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            0x0400,  # NSSystemDefined
+            _on_media_key,
+        )
+        log.info("Headphone media keys ready: play_pause -> toggle recording")
+
+    try:
+        AppHelper.callAfter(_register)
+    except Exception as e:
+        log.warning("Headphone media key setup failed: %s", e)
+
+
+def _teardown_media_keys() -> None:
+    global _media_key_monitor
+    if _media_key_monitor is None:
+        return
+    try:
+        from AppKit import NSEvent
+
+        NSEvent.removeMonitor_(_media_key_monitor)
+    except Exception as e:
+        log.debug("Headphone media key teardown failed: %s", e)
+    finally:
+        _media_key_monitor = None
+
+
 def _graceful_shutdown_or_force_exit(timeout_s: float = 1.5) -> None:
     """Best-effort shutdown cleanup after the GUI loop has already exited."""
     _teardown_global_hotkey()
+    _teardown_media_keys()
     _shutdown_whisper_cache()
 
     deadline = time.time() + timeout_s
@@ -1573,6 +1663,11 @@ def main() -> None:
 
     window.events.loaded += lambda: _setup_global_hotkey(window, api)
     favorites_window.events.loaded += lambda: api.refresh_favorites_overlay()
+
+    if sys.platform == "darwin":
+        threading.Thread(target=_setup_media_keys, args=(api,), daemon=True).start()
+    else:
+        log.debug("Media key listener only available on macOS")
 
     try:
         webview.start(debug=False)
