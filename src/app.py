@@ -1518,11 +1518,12 @@ def _teardown_global_hotkey() -> None:
 # not HID keyboard events. pynput captures keyboard but not headphone buttons.
 # Full support would require CGEvent tap with Accessibility permission.
 _media_key_listener = None
+_pynput_ctrl = False
 
 
 def _setup_media_keys(api: WhisperNoteAPI) -> None:
-    """Register headphone media keys (play/pause) & Ctrl+Cmd+Y pre-favorite to toggle recording."""
-    global _media_key_listener
+    """Register keyboard shortcuts via pynput (fallback for global hotkey)."""
+    global _media_key_listener, _pynput_ctrl
     log.warning("DEBUG: Setting up pynput listener...")
     try:
         from pynput import keyboard
@@ -1530,63 +1531,38 @@ def _setup_media_keys(api: WhisperNoteAPI) -> None:
         log.warning("pynput not available: %s", e)
         return
 
-    _ctrl_pressed = False
-    _cmd_pressed = False
+    _pynput_ctrl = False
 
     def _on_press(key):
-        nonlocal _ctrl_pressed, _cmd_pressed
+        global _pynput_ctrl
         try:
             key_code = key.vk if hasattr(key, "vk") else -1
             key_char = getattr(key, "char", None)
-
-            # Track modifier keys
-            if key_code == 0x1D:  # Left control
-                _ctrl_pressed = True
-            elif key_code == 0x37:  # Left command
-                _cmd_pressed = True
-            elif key_code == 0x36:  # Right command
-                _cmd_pressed = True
-
+            if key_code in (0x1D, 0x36, 0x37):
+                _pynput_ctrl = True
             log.warning(
-                "DEBUG pynput press: vk=0x%x '%s' ctrl=%s cmd=%s",
+                "DEBUG pynput press: vk=0x%x '%s' ctrl=%s",
                 key_code,
                 key_char,
-                _ctrl_pressed,
-                _cmd_pressed,
+                _pynput_ctrl,
             )
-
-            # Handle Ctrl+Cmd+Y (keycode 0x19 = 25 decimal)
-            if _ctrl_pressed and _cmd_pressed:
-                log.warning(
-                    "DEBUG: Ctrl+Cmd detected, Y key needed. key_code=%d (0x%x)",
-                    key_code,
-                    key_code,
-                )
-                if key_code == 25:  # 0x19 = 25 decimal = 'Y'
-                    log.warning("DEBUG: Hit Y key!")
-                    global _pre_favorite_next
-                    _pre_favorite_next = not _pre_favorite_next
-                    threading.Thread(
-                        target=api._emit,
-                        args=("pre_favorite_toggled", {"enabled": _pre_favorite_next}),
-                        daemon=True,
-                    ).start()
-
-            # Handle headphone media key (play/pause)
-            if key_code == 25:  # Also check 25 just in case
-                threading.Thread(target=api.toggle_recording, daemon=True).start()
-
+            if _pynput_ctrl and key_code == 25:
+                log.warning("DEBUG: Ctrl+Y detected!")
+                global _pre_favorite_next
+                _pre_favorite_next = not _pre_favorite_next
+                threading.Thread(
+                    target=api._emit,
+                    args=("pre_favorite_toggled", {"enabled": _pre_favorite_next}),
+                    daemon=True,
+                ).start()
         except Exception as e:
             log.warning("DEBUG: Exception in pynput: %s", e)
 
     def _on_release(key):
-        nonlocal _ctrl_pressed, _cmd_pressed
+        global _pynput_ctrl
         key_code = key.vk if hasattr(key, "vk") else -1
-        if key_code == 0x1D:
-            _ctrl_pressed = False
-        elif key_code == 0x37 or key_code == 0x36:
-            _cmd_pressed = False
-        log.warning("DEBUG pynput release: vk=0x%x", key_code)
+        if key_code in (0x1D, 0x36, 0x37):
+            _pynput_ctrl = False
 
     try:
         _media_key_listener = keyboard.Listener(
