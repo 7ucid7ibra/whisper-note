@@ -725,6 +725,16 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
+  // ⌃⌘X — stop recording and paste to cursor
+  if (e.metaKey && e.ctrlKey && e.key === "x" && !e.altKey && !e.shiftKey) {
+    if (inInput) return;
+    e.preventDefault();
+    if (pywebview.api.stop_and_paste) {
+      pywebview.api.stop_and_paste();
+    }
+    return;
+  }
+
   // Space — pause / resume
   if (e.key === " " && isRecording) {
     if (inInput) return;

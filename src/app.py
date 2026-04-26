@@ -88,8 +88,12 @@ _rec_frames: list = []  # list of numpy int16 arrays
 _rec_stream = None  # sounddevice.InputStream
 
 # When True, the in-progress recording will be saved as a favorite once
-# transcription completes. Set by ⌃⌘Y stop, cleared after each save.
+# transcription completes. Set by ⌃⌘⇧Y stop, cleared after each save.
 _favorite_current_recording = False
+
+# When True, the transcription will be pasted after completion.
+# Set by ⌃⌘Y, cleared after paste.
+_paste_after_transcription = False
 
 # ── Whisper cache ─────────────────────────────────────────────────────────────
 _whisper_cache: dict = {}
@@ -578,6 +582,15 @@ class WhisperNoteAPI:
             _favorite_current_recording = True
             self._do_stop(discard=False)
 
+    def stop_and_paste(self) -> None:
+        """If recording, stop, transcribe, and paste the result at cursor."""
+        global _paste_after_transcription
+        with _rec_lock:
+            if not _rec_active:
+                return
+            _paste_after_transcription = True
+            self._do_stop(discard=False)
+
     def pause_recording(self) -> None:
         """Toggle pause/resume while recording."""
         global _rec_paused
@@ -786,6 +799,20 @@ class WhisperNoteAPI:
                     "favorite": False,
                 },
             )
+            global _paste_after_transcription, _favorite_current_recording
+            if _paste_after_transcription:
+                _paste_after_transcription = False
+                self._copy_and_paste_text(text)
+            if _favorite_current_recording:
+                _favorite_current_recording = False
+                if record:
+                    conn = sqlite3.connect(DB_PATH)
+                    conn.execute(
+                        "UPDATE transcriptions SET favorite = 1 WHERE id = ?",
+                        (record["id"],),
+                    )
+                    conn.commit()
+                    conn.close()
         else:
             self._emit("transcription_error", "nothing heard")
 
@@ -974,6 +1001,46 @@ class WhisperNoteAPI:
         except Exception as e:
             log.warning("Failed to favorite latest transcription: %s", e)
             return None
+
+    def _copy_and_paste_text(self, text: str) -> None:
+        """Copy text to clipboard and paste at cursor."""
+
+        def _do_paste():
+            try:
+                import subprocess
+
+                subprocess.run(
+                    ["pbcopy"],
+                    input=text.encode("utf-8"),
+                    check=False,
+                )
+            except Exception as e:
+                log.debug("pbcopy failed: %s", e)
+            try:
+                subprocess.run(
+                    [
+                        "osascript",
+                        "-e",
+                        'tell application "System Events" to keystroke "v" using command down',
+                    ],
+                    check=False,
+                )
+            except Exception as e:
+                log.debug("osascript paste failed: %s", e)
+
+        threading.Thread(target=_do_paste, daemon=True).start()
+
+    def _mark_latest_favorite(self) -> None:
+        """Mark the most recent transcription as favorite."""
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute(
+                    "UPDATE transcriptions SET favorite = 1 WHERE id = (SELECT MAX(id) FROM transcriptions)"
+                )
+                conn.commit()
+            log.debug("Marked latest transcription as favorite")
+        except Exception as e:
+            log.warning("Failed to mark latest as favorite: %s", e)
 
     def update_transcription_text(
         self, transcription_id: int, text: str
@@ -1442,6 +1509,7 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
         _SHFT = int(NSEventModifierFlagShift)
         _A = 0  # kVK_ANSI_A
         _Y = 16  # kVK_ANSI_Y
+        _X = 7  # kVK_ANSI_X
 
         def _on_key(event):
             try:
@@ -1452,25 +1520,22 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
                     chars = (event.charactersIgnoringModifiers() or "").lower()
                 except Exception:
                     chars = ""
-                if (
-                    (flags & _CMD)
-                    and (flags & _CTRL)
-                    and not (flags & _OPT)
-                    and not (flags & _SHFT)
-                ):
+                if (flags & _CMD) and (flags & _CTRL) and not (flags & _OPT):
                     if key_code == _A or chars == "a":
-                        # Call Python recording directly — no JS or evaluate_js needed.
-                        # Spawn a thread so we don't block the Cocoa event queue.
                         log.debug("Global hotkey detected: ⌃⌘A")
                         threading.Thread(
                             target=api.toggle_recording, daemon=True
                         ).start()
                     elif key_code == _Y or chars == "y" or chars == "z":
-                        # German QWERTZ keyboards: physical Y key (keycode 16) reports 'z'
-                        log.debug("Global hotkey detected: ⌃⌘Y")
+                        # German QWERTZ: physical Y key = Z character
+                        log.debug("Global hotkey detected: ⌃⌘Y → stop & favorite")
                         threading.Thread(
                             target=api.stop_and_favorite, daemon=True
                         ).start()
+                    elif key_code == _X or chars == "x":
+                        # Ctrl+Cmd+X = stop & paste
+                        log.debug("Global hotkey detected: ⌃⌘X → stop & paste")
+                        threading.Thread(target=api.stop_and_paste, daemon=True).start()
             except Exception:
                 pass
 
@@ -1480,7 +1545,7 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
                 int(NSEventMaskKeyDown),
                 _on_key,
             )
-            log.info("Global hotkeys ready: ⌃⌘A, ⌃⌘Y")
+            log.info("Global hotkeys ready: ⌃⌘A (record), ⌃⌘Y (favorite), ⌃⌘X (paste)")
 
         permission_ok = _ensure_global_hotkey_permission(prompt=True)
         if not permission_ok and not _hotkey_perm_warned:
