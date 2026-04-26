@@ -1146,6 +1146,27 @@ body.favorites-view .nodes-focus-wrap .msg.voice.editing .msg-edit-textarea {
     inset 0 -1.5px 0 rgba(0,0,0,0.14),
     0 0 0 0 rgba(239,68,68,0.40);
 }
+
+.mic-btn.pre-favorite {
+  border-color: rgba(255, 200, 50, 0.7);
+  box-shadow:
+    inset 0 1.5px 0 rgba(255,220,150,0.30),
+    inset 0 -1.5px 0 rgba(0,0,0,0.14),
+    0 0 8px rgba(255,180,50,0.35);
+}
+.mic-btn.pre-favorite::after {
+  content: "🔖";
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  animation: bounce 0.6s ease-in-out infinite;
+}
+@keyframes bounce {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-4px); }
+}
 @keyframes pulse-rec {
   0%, 100% { box-shadow:
     inset 0 1.5px 0 rgba(255,200,200,0.30),

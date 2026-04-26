@@ -87,6 +87,9 @@ _rec_paused = False
 _rec_frames: list = []  # list of numpy int16 arrays
 _rec_stream = None  # sounddevice.InputStream
 
+# Pre-favorite flag: when set, next recording will be auto-favorited
+_pre_favorite_next = False
+
 # ── Whisper cache ─────────────────────────────────────────────────────────────
 _whisper_cache: dict = {}
 _whisper_lock = threading.Lock()
@@ -855,13 +858,21 @@ class WhisperNoteAPI:
         if not text.strip():
             return None
         created_at = datetime.now(timezone.utc).isoformat()
+
+        # Check pre-favorite flag
+        should_favorite = False
+        global _pre_favorite_next
+        if _pre_favorite_next:
+            should_favorite = True
+            _pre_favorite_next = False  # Reset flag
+
         try:
             with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.execute(
                     """
                     INSERT INTO transcriptions (
                         created_at, text, source, duration_ms, model, is_local, favorite
-                    ) VALUES (?, ?, ?, ?, ?, ?, 0)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         created_at,
@@ -870,6 +881,7 @@ class WhisperNoteAPI:
                         duration_ms,
                         model,
                         1 if is_local else 0,
+                        1 if should_favorite else 0,
                     ),
                 )
                 conn.commit()
@@ -1446,8 +1458,15 @@ def _setup_global_hotkey(window, api: WhisperNoteAPI) -> None:  # noqa: ARG001
                         ).start()
                     elif key_code == _Y or chars == "y":
                         log.debug("Global hotkey detected: ⌃⌘Y")
+                        global _pre_favorite_next
+                        _pre_favorite_next = not _pre_favorite_next
                         threading.Thread(
-                            target=api.favorite_latest_transcription, daemon=True
+                            target=api._emit,
+                            args=(
+                                "pre_favorite_toggled",
+                                {"enabled": _pre_favorite_next},
+                            ),
+                            daemon=True,
                         ).start()
             except Exception:
                 pass

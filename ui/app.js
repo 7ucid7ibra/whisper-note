@@ -178,6 +178,11 @@ window.__onPythonEvent = (raw) => {
   const { event, data } = JSON.parse(raw);
   switch (event) {
 
+    case "pre_favorite_toggled":
+      micBtn.classList.toggle("pre-favorite", !!data.enabled);
+      showSystem(data.enabled ? "🔖 Next note will be favorited" : "Auto-favorite cancelled");
+      break;
+
     case "recording_started":
       isRecording = true;
       recordingPaused = false;
